@@ -21,7 +21,7 @@ def get_x_dot_matrices(q_dot, M, K):
 # lists of problems by dimensions
 dim21_problems = ['double_int', 'simple_pend']
 dim41_problems = ['pend_cart_pl', 'pend_cart', 'ua_manipulator_pl', 'acrobot_pl']
-dim61_problems = ['dual_pend_cart_pl', 'dual_pend_cart']
+dim61_problems = ['dual_pend_cart_pl', 'dual_pend_cart', 'double_pend_cart_pl']
 dim62_problems = ['vtol']
 
 # problem dimensions
@@ -35,7 +35,7 @@ dimensions.update({problem: [6, 2] for problem in dim62_problems})
 pi = 3.1415926535897932384626433832795028841971693993
 
 
-class tfp(object):
+class ocp(object):
 
 
     def __init__(self, name):
@@ -61,13 +61,19 @@ class tfp(object):
         self.S = None
         self.x_dict = None
         self.u_dict = None
+        self.has_objective = None
+        self.H = None
+        self.y_dot = None
+        self.Hu = None
+        self.u_noc = None
+        self.z_dot = None
 
         self.name = name
-        if self.name not in [*dim21_problems, *dim41_problems, *dim61_problems, *dim62_problems]:
-            print('Error: Not Implemented')
-            return
+        if self.name not in [*dim21_problems, *dim41_problems, *dim61_problems, *dim62_problems]: print('Error: Not Implemented')
+        assert self.name in [*dim21_problems, *dim41_problems, *dim61_problems, *dim62_problems]
         self.x_dim, self.u_dim = dimensions[self.name]
         self.x = sp.Matrix(sp.symbols('x[:'+str(self.x_dim)+']'))
+        self.y = sp.Matrix(sp.symbols('y[:'+str(self.x_dim)+']'))
         self.u = sp.Matrix(sp.symbols('u[:'+str(self.u_dim)+']'))
 
         if self.name in dim21_problems:
@@ -159,13 +165,13 @@ class tfp(object):
 
             self.x_min = -np.inf*np.ones(self.x_dim)
             self.x_max = np.inf*np.ones(self.x_dim)
-#            self.u_min = -np.inf*np.ones(self.u_dim)
-#            self.u_max = np.inf*np.ones(self.u_dim)
-            self.u_min = -70*np.ones(self.u_dim)
-            self.u_max = 70*np.ones(self.u_dim)
+            self.u_min = -np.inf*np.ones(self.u_dim)
+            self.u_max = np.inf*np.ones(self.u_dim)
+#            self.u_min = -70*np.ones(self.u_dim)
+#            self.u_max = 70*np.ones(self.u_dim)
 
-            self.Q = sp.diag(*np.ones(self.x_dim))
-            self.R = sp.diag(*np.ones(self.u_dim))
+            self.Q = sp.diag(1,0,1,0)
+            self.R = sp.diag(1)
             self.S = sp.diag(*np.ones(self.x_dim))
 
 
@@ -197,13 +203,13 @@ class tfp(object):
 
             self.x_min = -np.inf*np.ones(self.x_dim)
             self.x_max = np.inf*np.ones(self.x_dim)
-            self.x_min[0] = -2
-            self.x_max[0] = 2
+#            self.x_min[0] = -2
+#            self.x_max[0] = 2
             self.u_min = -np.inf*np.ones(self.u_dim)
             self.u_max = np.inf*np.ones(self.u_dim)
 
-            self.Q = sp.diag(*np.ones(self.x_dim))
-            self.R = sp.diag(*np.ones(self.u_dim))
+            self.Q = sp.diag(1,0,1,0)
+            self.R = sp.diag(1)
             self.S = sp.diag(*np.ones(self.x_dim))
 
 
@@ -233,15 +239,15 @@ class tfp(object):
 
             self.x_min = -np.inf*np.ones(self.x_dim)
             self.x_max = np.inf*np.ones(self.x_dim)
-            self.x_min[0] = -2
-            self.x_max[0] = 2
+#            self.x_min[0] = -2
+#            self.x_max[0] = 2
             self.u_min = -np.inf*np.ones(self.u_dim)
             self.u_max = np.inf*np.ones(self.u_dim)
 #            self.u_min = -100*np.ones(self.u_dim)
 #            self.u_max = 100*np.ones(self.u_dim)
 
-            self.Q = sp.diag(*np.ones(self.x_dim))
-            self.R = sp.diag(*np.ones(self.u_dim))
+            self.Q = sp.diag(1,0,1,0,1,0)
+            self.R = sp.diag(1)
             self.S = sp.diag(*np.ones(self.x_dim))
 
 
@@ -275,15 +281,13 @@ class tfp(object):
 
             self.x_min = -np.inf*np.ones(self.x_dim)
             self.x_max = np.inf*np.ones(self.x_dim)
-            self.x_min[0] = -2
-            self.x_max[0] = 2
-            self.u_min = -np.inf*np.ones(self.u_dim)
-            self.u_max = np.inf*np.ones(self.u_dim)
+#            self.x_min[0] = -2
+#            self.x_max[0] = 2
             self.u_min = -np.inf*np.ones(self.u_dim)
             self.u_max = np.inf*np.ones(self.u_dim)
 
-            self.Q = sp.diag(*np.ones(self.x_dim))
-            self.R = sp.diag(*np.ones(self.u_dim))
+            self.Q = sp.diag(1,0,1,0,1,0)
+            self.R = sp.diag(1)
             self.S = sp.diag(*np.ones(self.x_dim))
 
 
@@ -327,7 +331,7 @@ class tfp(object):
             self.u_min = -np.inf*np.ones(self.u_dim)
             self.u_max = np.inf*np.ones(self.u_dim)
 
-            self.Q = sp.diag(*np.ones(self.x_dim))
+            self.Q = sp.diag(1,0,1,0,1,0)
             self.R = sp.diag(*np.ones(self.u_dim))
             self.S = sp.diag(*np.ones(self.x_dim))
 
@@ -403,6 +407,59 @@ class tfp(object):
             self.S = sp.diag(*np.ones(self.x_dim))
 
 
+        elif self.name is 'double_pend_cart_pl':
+            # length, masses, and moments of inertia of the pendulums
+            l1 = 0.25
+            l2 = 0.25
+            m1 = 0.1
+            m2 = 0.1
+            J1 = 4/3*m1*l1**2
+            J2 = 4/3*m2*l2**2
+
+            M = 1.0     # mass of the cart
+            g = 9.81    # gravitational acceleration
+
+            self.x_dict = {'1': 's', '2': 'v', '3': 'theta1', '4': 'omega1', '5': 'theta2', '6': 'omega2'}
+            self.u_dict = {'1': 'a'}
+
+            self.x_dot = sp.Matrix([x2,
+                                    u1,
+                                    x4,
+                                    u1*(l2*m2*(J2 + l1*l2*m2*sp.cos(x5) + l2**2*m2)*sp.cos(x3 + x5) - (J2 + l2**2*m2)*(l1*m1*sp.cos(x3) + l1*m2*sp.cos(x3) + l2*m2*sp.cos(x3 + x5)))/(J1*J2 + J1*l2**2*m2 + J2*l1**2*m1 + J2*l1**2*m2 + l1**2*l2**2*m1*m2 + l1**2*l2**2*m2**2*sp.sin(x5)**2) + (l2*m2*(g*sp.sin(x3 + x5) + l1*x4**2*sp.sin(x5))*(J2 + l1*l2*m2*sp.cos(x5) + l2**2*m2) - (J2 + l2**2*m2)*(g*l1*m1*sp.sin(x3) + g*l1*m2*sp.sin(x3) + g*l2*m2*sp.sin(x3 + x5) - 2*l1*l2*m2*x4*x6*sp.sin(x5) - l1*l2*m2*x6**2*sp.sin(x5)))/(J1*J2 + J1*l2**2*m2 + J2*l1**2*m1 + J2*l1**2*m2 + l1**2*l2**2*m1*m2 + l1**2*l2**2*m2**2*sp.sin(x5)**2),
+                                    x6,
+                                    u1*(-l2*m2*(J1 + J2 + l1**2*m1 + l1**2*m2 + 2*l1*l2*m2*sp.cos(x5) + l2**2*m2)*sp.cos(x3 + x5) + (J2 + l1*l2*m2*sp.cos(x5) + l2**2*m2)*(l1*m1*sp.cos(x3) + l1*m2*sp.cos(x3) + l2*m2*sp.cos(x3 + x5)))/(J1*J2 + J1*l2**2*m2 + J2*l1**2*m1 + J2*l1**2*m2 + l1**2*l2**2*m1*m2 + l1**2*l2**2*m2**2*sp.sin(x5)**2) + (-l2*m2*(g*sp.sin(x3 + x5) + l1*x4**2*sp.sin(x5))*(J1 + J2 + l1**2*m1 + l1**2*m2 + 2*l1*l2*m2*sp.cos(x5) + l2**2*m2) + (J2 + l1*l2*m2*sp.cos(x5) + l2**2*m2)*(g*l1*m1*sp.sin(x3) + g*l1*m2*sp.sin(x3) + g*l2*m2*sp.sin(x3 + x5) - 2*l1*l2*m2*x4*x6*sp.sin(x5) - l1*l2*m2*x6**2*sp.sin(x5)))/(J1*J2 + J1*l2**2*m2 + J2*l1**2*m1 + J2*l1**2*m2 + l1**2*l2**2*m1*m2 + l1**2*l2**2*m2**2*sp.sin(x5)**2)])
+
+            self.x_0 = np.array([0, 0, np.pi, 0, np.pi, 0])
+            self.x_f = np.array([0, 0, 0, 0, 0, 0])
+#            self.u_0 = np.zeros(self.u_dim)
+#            self.u_f = np.zeros(self.u_dim)
+            self.t_0 = 0
+            self.t_f = 2
+
+            self.x_min = -np.inf*np.ones(self.x_dim)
+            self.x_max = np.inf*np.ones(self.x_dim)
+#            self.x_min[0] = -2
+#            self.x_max[0] = 2
+            self.u_min = -np.inf*np.ones(self.u_dim)
+            self.u_max = np.inf*np.ones(self.u_dim)
+
+            self.Q = sp.diag(*np.ones(self.x_dim))
+            self.R = sp.diag(*np.ones(self.u_dim))
+            self.S = sp.diag(*np.ones(self.x_dim))
+
+
         self.L = ((self.x.T - np.reshape(self.x_f, (1,self.x_dim)))*self.Q*(self.x - np.reshape(self.x_f, (self.x_dim,1)))
                         + self.u.T*self.R*self.u)
         self.E = (self.x.T - np.reshape(self.x_f, (1,self.x_dim)))*self.S*(self.x - np.reshape(self.x_f, (self.x_dim,1)))
+
+        self.has_objective = (np.any(np.array(self.Q) != 0) or np.any(np.array(self.R) != 0))
+
+
+    def setup_optbvp(self):
+        self.H = self.L + self.y.T*self.x_dot
+        self.y_dot = sp.simplify(-self.H.jacobian(self.x))
+        self.Hu = sp.simplify(self.H.jacobian(self.u))
+
+        u_noc = sp.solve(self.Hu, self.u)
+        self.u_noc = sp.Matrix([val for (key, val) in u_noc.items()])
+        self.z_dot = sp.Matrix([*self.x_dot, *self.y_dot]).subs([(self.u[i], self.u_noc[i]) for i in range(self.u_dim)])
