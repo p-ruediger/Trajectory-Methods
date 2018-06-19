@@ -6,11 +6,14 @@ Created on Thu May 31 16:09:40 2018
 
 """
 
-# Examples taken from https://pytrajectory.readthedocs.io/en/master/guide/examples/index.html
+# Some examples taken from https://pytrajectory.readthedocs.io/en/master/guide/examples/index.html
 # Kunze, Andreas, Knoll, Carsten, & Schnabel, Oliver. (2017, February 8). PyTrajectory ‒ Python library for trajectory generation for nonlinear control systems (Version v1.3.0). Zenodo. http://doi.org/10.5281/zenodo.276212
+
+# Some examples based on http://nbviewer.jupyter.org/github/cknoll/beispiele/tree/master/
 
 import sympy as sp
 import numpy as np
+from joblib import load
 
 
 def get_x_dot_matrices(q_dot, M, K):
@@ -20,9 +23,10 @@ def get_x_dot_matrices(q_dot, M, K):
 
 # lists of problems by dimensions
 dim21_problems = ['double_int', 'simple_pend']
-dim41_problems = ['pend_cart_pl', 'pend_cart', 'ua_manipulator_pl', 'acrobot_pl']
-dim61_problems = ['dual_pend_cart_pl', 'dual_pend_cart', 'double_pend_cart_pl']
+dim41_problems = ['simple_pend_cart_pl', 'simple_pend_cart', 'pend_cart_pl', 'pend_cart', 'ua_manipulator_pl', 'acrobot_pl']
+dim61_problems = ['simple_dual_pend_cart_pl', 'simple_dual_pend_cart', 'dual_pend_cart_pl', 'dual_pend_cart', 'double_pend_cart_pl']
 dim62_problems = ['vtol']
+dim81_problems = ['triple_pend_cart_pl']
 
 # problem dimensions
 dimensions = {}
@@ -30,6 +34,7 @@ dimensions.update({problem: [2, 1] for problem in dim21_problems})
 dimensions.update({problem: [4, 1] for problem in dim41_problems})
 dimensions.update({problem: [6, 1] for problem in dim61_problems})
 dimensions.update({problem: [6, 2] for problem in dim62_problems})
+dimensions.update({problem: [8, 1] for problem in dim81_problems})
 
 
 pi = 3.1415926535897932384626433832795028841971693993
@@ -69,8 +74,8 @@ class ocp(object):
         self.z_dot = None
 
         self.name = name
-        if self.name not in [*dim21_problems, *dim41_problems, *dim61_problems, *dim62_problems]: print('Error: Not Implemented')
-        assert self.name in [*dim21_problems, *dim41_problems, *dim61_problems, *dim62_problems]
+        if self.name not in [*dim21_problems, *dim41_problems, *dim61_problems, *dim62_problems, *dim81_problems]: print('Error: Not Implemented')
+        assert self.name in [*dim21_problems, *dim41_problems, *dim61_problems, *dim62_problems, *dim81_problems]
         self.x_dim, self.u_dim = dimensions[self.name]
         self.x = sp.Matrix(sp.symbols('x[:'+str(self.x_dim)+']'))
         self.y = sp.Matrix(sp.symbols('y[:'+str(self.x_dim)+']'))
@@ -92,14 +97,18 @@ class ocp(object):
             x1, x2, x3, x4, x5, x6 = self.x
             u1, u2 = self.u
 
+        elif self.name in dim81_problems:
+            x1, x2, x3, x4, x5, x6, x7, x8 = self.x
+            u1 = self.u[0]
+
 
         if self.name is 'double_int':
-            # double integrator (partially linearized)
-            self.x_dot = sp.Matrix([x2,
-                                    u1])
-
+            # double integrator
             self.x_dict = {'1': 's', '2': 'v'}
             self.u_dict = {'1': 'a'}
+
+            self.x_dot = sp.Matrix([x2,
+                                    u1])
 
             self.x_0 = np.array([0, 0])
             self.x_f = np.array([1, 0])
@@ -121,12 +130,15 @@ class ocp(object):
 
 
         elif self.name is 'simple_pend':
-            # simple pendulum (partially linearized)
-            self.x_dot = sp.Matrix([x2,
-                                    u1 - sp.sin(x1)])
+            # simple pendulum
+            l = 0.5     # length of the pendulum
+            g = 9.81    # gravitational acceleration
 
             self.x_dict = {'1': 'theta', '2': 'omega'}
             self.u_dict = {'1': 'alpha'}
+
+            self.x_dot = sp.Matrix([x2,
+                                    u1 + g/l*sp.sin(x1)])
 
             self.x_0 = np.array([np.pi, 0])
             self.x_f = np.array([0, 0])
@@ -143,23 +155,24 @@ class ocp(object):
             self.S = sp.diag(*np.ones(self.x_dim))
 
 
-        elif self.name is 'pend_cart_pl':
-            # PyTrajectory: ex0 (pendulum on cart, partially linearized)
-            l = 0.5     # length of the pendulum
-            g = 9.81    # gravitational acceleration
+        elif self.name in ['simple_pend_cart_pl', 'simple_pend_cart', 'pend_cart_pl', 'pend_cart']:
+            # (simple) (partially linearized) pendulum on cart
+            l1 = 0.5            # length of the pendulum
+            s1 = l1/2           # center of mass of the pendulum
+            m1 = 0.1            # mass of the pendulum
+            J1 = 4/3*m1*l1**2   # moment of inertia of the pendulum
+            m0 = 1.0            # mass of the cart
+            g = 9.81            # gravitational acceleration
 
             self.x_dict = {'1': 's', '2': 'v', '3': 'theta', '4': 'omega'}
             self.u_dict = {'1': 'a'}
 
-            self.x_dot = sp.Matrix([x2,
-                                    u1,
-                                    x4,
-                                    (1/l)*(g*sp.sin(x3)+u1*sp.cos(x3))])
+            self.x_dot = eval(load('examples/'+self.name+'.str')['x_dot_str'])
 
             self.x_0 = np.array([0, 0, np.pi, 0])
             self.x_f = np.array([0, 0, 0, 0])
-            self.u_0 = np.zeros(self.u_dim)
-            self.u_f = np.zeros(self.u_dim)
+#            self.u_0 = np.zeros(self.u_dim)
+#            self.u_f = np.zeros(self.u_dim)
             self.t_0 = 0
             self.t_f = 2
 
@@ -175,60 +188,25 @@ class ocp(object):
             self.S = sp.diag(*np.ones(self.x_dim))
 
 
-        elif self.name is 'pend_cart':
-            # PyTrajectory: ex1 (pendulum on cart)
-
-            l = 0.5     # length of the pendulum rod
-            m = 0.1     # mass of the pendulum
-            M = 1.0     # mass of the cart
-            g = 9.81    # gravitational acceleration
-
-            s = sp.sin(x3)
-            c = sp.cos(x3)
-
-            self.x_dict = {'1': 's', '2': 'v', '3': 'theta', '4': 'omega'}
-            self.u_dict = {'1': 'F'}
-
-            self.x_dot = sp.Matrix([x2,
-                                    m*s*(-l*x4**2+g*c)/(M+m*s**2)+1/(M+m*s**2)*u1,
-                                    x4,
-                                    s*(-m*l*x4**2*c+g*(M+m))/(M*l+m*l*s**2)+c/(M*l+l*m*s**2)*u1])
-
-            self.x_0 = np.array([0, 0, np.pi, 0])
-            self.x_f = np.array([0, 0, 0, 0])
-#            self.u_0 = np.zeros(self.u_dim)
-#            self.u_f = np.zeros(self.u_dim)
-            self.t_0 = 0
-            self.t_f = 2
-
-            self.x_min = -np.inf*np.ones(self.x_dim)
-            self.x_max = np.inf*np.ones(self.x_dim)
-#            self.x_min[0] = -2
-#            self.x_max[0] = 2
-            self.u_min = -np.inf*np.ones(self.u_dim)
-            self.u_max = np.inf*np.ones(self.u_dim)
-
-            self.Q = sp.diag(1,0,1,0)
-            self.R = sp.diag(1)
-            self.S = sp.diag(*np.ones(self.x_dim))
-
-
-        elif self.name is 'dual_pend_cart_pl':
-            # PyTrajectory: ex2 (dual pendulum on cart, partially linearized)
-            # length of the pendulums
+        elif self.name in ['simple_dual_pend_cart_pl', 'simple_dual_pend_cart', 'dual_pend_cart_pl', 'dual_pend_cart']:
+            # (simple) (partially linearized) dual pendulum on cart
+            # length, center of mass, mass, and moment of inertia of the pendulums
             l1 = 0.7
+            s1 = l1/2
+            m1 = 0.7
+            J1 = 4/3*m1*l1**2
             l2 = 0.5
+            s2 = l1/2
+            m2 = 0.5
+            J2 = 4/3*m1*l1**2
+
+            m0 = 1.0    # mass of the cart
             g = 9.81    # gravitational acceleration
 
             self.x_dict = {'1': 's', '2': 'v', '3': 'theta1', '4': 'omega1', '5': 'theta2', '6': 'omega2'}
             self.u_dict = {'1': 'a'}
 
-            self.x_dot = sp.Matrix([x2,
-                                    u1,
-                                    x4,
-                                    (1/l1)*(g*sp.sin(x3)+u1*sp.cos(x3)),
-                                    x6,
-                                    (1/l2)*(g*sp.sin(x5)+u1*sp.cos(x5))])
+            self.x_dot = eval(load('examples/'+self.name+'.str')['x_dot_str'])
 
             self.x_0 = np.array([0, 0, np.pi, 0, np.pi, 0])
             self.x_f = np.array([0, 0, 0, 0, 0, 0])
@@ -245,46 +223,6 @@ class ocp(object):
             self.u_max = np.inf*np.ones(self.u_dim)
 #            self.u_min = -100*np.ones(self.u_dim)
 #            self.u_max = 100*np.ones(self.u_dim)
-
-            self.Q = sp.diag(1,0,1,0,1,0)
-            self.R = sp.diag(1)
-            self.S = sp.diag(*np.ones(self.x_dim))
-
-
-        elif self.name is 'dual_pend_cart':
-            # PyTrajectory: based on ex2 (dual pendulum on cart)
-            # length and masses of the pendulums
-            l1 = 0.7
-            m1 = 0.7
-            l2 = 0.5
-            m2 = 0.5
-
-            M = 1.0     # mass of the cart
-            g = 9.81    # gravitational acceleration
-
-            self.x_dict = {'1': 's', '2': 'v', '3': 'theta1', '4': 'omega1', '5': 'theta2', '6': 'omega2'}
-            self.u_dict = {'1': 'a'}
-
-            self.x_dot = sp.Matrix([x2,
-                                    u1/(M + m1*sp.sin(x3)**2 + m2*sp.sin(x5)**2) + (g*m1*sp.sin(2*x3)/2 + g*m2*sp.sin(2*x5)/2 + l1*m1*x2**2*sp.sin(x3) + l2*m2*x4**2*sp.sin(x5))/(M + m1*sp.sin(x3)**2 + m2*sp.sin(x5)**2),
-                                    x4,
-                                    -u1*sp.cos(x3)/(l1*(M + m1*sp.sin(x3)**2 + m2*sp.sin(x5)**2)) - (-g*m2*(sp.sin(x3 - 2*x5) - sp.sin(x3 + 2*x5))/4 + g*(M + m1 + m2*sp.sin(x5)**2)*sp.sin(x3) + (l1*m1*x2**2*sp.sin(x3) + l2*m2*x4**2*sp.sin(x5))*sp.cos(x3))/(l1*(M + m1*sp.sin(x3)**2 + m2*sp.sin(x5)**2)),
-                                    x6,
-                                    -u1*sp.cos(x5)/(l2*(M + m1*sp.sin(x3)**2 + m2*sp.sin(x5)**2)) - (g*m1*(sp.sin(2*x3 - x5) + sp.sin(2*x3 + x5))/4 + g*(M + m1*sp.sin(x3)**2 + m2)*sp.sin(x5) + (l1*m1*x2**2*sp.sin(x3) + l2*m2*x4**2*sp.sin(x5))*sp.cos(x5))/(l2*(M + m1*sp.sin(x3)**2 + m2*sp.sin(x5)**2))])
-
-            self.x_0 = np.array([0, 0, np.pi, 0, np.pi, 0])
-            self.x_f = np.array([0, 0, 0, 0, 0, 0])
-#            self.u_0 = np.zeros(self.u_dim)
-#            self.u_f = np.zeros(self.u_dim)
-            self.t_0 = 0
-            self.t_f = 2
-
-            self.x_min = -np.inf*np.ones(self.x_dim)
-            self.x_max = np.inf*np.ones(self.x_dim)
-#            self.x_min[0] = -2
-#            self.x_max[0] = 2
-            self.u_min = -np.inf*np.ones(self.u_dim)
-            self.u_max = np.inf*np.ones(self.u_dim)
 
             self.Q = sp.diag(1,0,1,0,1,0)
             self.R = sp.diag(1)
@@ -408,38 +346,81 @@ class ocp(object):
 
 
         elif self.name is 'double_pend_cart_pl':
-            # length, masses, and moments of inertia of the pendulums
-            l1 = 0.25
-            l2 = 0.25
+            # partially linearized double pendulum on cart
+            # length, center of mass, mass, and moment of inertia of the pendulums
+            l1 = 0.5
+            l2 = 0.5
+            s1 = l1/2
+            s2 = l2/2
             m1 = 0.1
             m2 = 0.1
             J1 = 4/3*m1*l1**2
             J2 = 4/3*m2*l2**2
 
-            M = 1.0     # mass of the cart
+            m0 = 1.0     # mass of the cart
             g = 9.81    # gravitational acceleration
 
             self.x_dict = {'1': 's', '2': 'v', '3': 'theta1', '4': 'omega1', '5': 'theta2', '6': 'omega2'}
             self.u_dict = {'1': 'a'}
 
-            self.x_dot = sp.Matrix([x2,
-                                    u1,
-                                    x4,
-                                    u1*(l2*m2*(J2 + l1*l2*m2*sp.cos(x5) + l2**2*m2)*sp.cos(x3 + x5) - (J2 + l2**2*m2)*(l1*m1*sp.cos(x3) + l1*m2*sp.cos(x3) + l2*m2*sp.cos(x3 + x5)))/(J1*J2 + J1*l2**2*m2 + J2*l1**2*m1 + J2*l1**2*m2 + l1**2*l2**2*m1*m2 + l1**2*l2**2*m2**2*sp.sin(x5)**2) + (l2*m2*(g*sp.sin(x3 + x5) + l1*x4**2*sp.sin(x5))*(J2 + l1*l2*m2*sp.cos(x5) + l2**2*m2) - (J2 + l2**2*m2)*(g*l1*m1*sp.sin(x3) + g*l1*m2*sp.sin(x3) + g*l2*m2*sp.sin(x3 + x5) - 2*l1*l2*m2*x4*x6*sp.sin(x5) - l1*l2*m2*x6**2*sp.sin(x5)))/(J1*J2 + J1*l2**2*m2 + J2*l1**2*m1 + J2*l1**2*m2 + l1**2*l2**2*m1*m2 + l1**2*l2**2*m2**2*sp.sin(x5)**2),
-                                    x6,
-                                    u1*(-l2*m2*(J1 + J2 + l1**2*m1 + l1**2*m2 + 2*l1*l2*m2*sp.cos(x5) + l2**2*m2)*sp.cos(x3 + x5) + (J2 + l1*l2*m2*sp.cos(x5) + l2**2*m2)*(l1*m1*sp.cos(x3) + l1*m2*sp.cos(x3) + l2*m2*sp.cos(x3 + x5)))/(J1*J2 + J1*l2**2*m2 + J2*l1**2*m1 + J2*l1**2*m2 + l1**2*l2**2*m1*m2 + l1**2*l2**2*m2**2*sp.sin(x5)**2) + (-l2*m2*(g*sp.sin(x3 + x5) + l1*x4**2*sp.sin(x5))*(J1 + J2 + l1**2*m1 + l1**2*m2 + 2*l1*l2*m2*sp.cos(x5) + l2**2*m2) + (J2 + l1*l2*m2*sp.cos(x5) + l2**2*m2)*(g*l1*m1*sp.sin(x3) + g*l1*m2*sp.sin(x3) + g*l2*m2*sp.sin(x3 + x5) - 2*l1*l2*m2*x4*x6*sp.sin(x5) - l1*l2*m2*x6**2*sp.sin(x5)))/(J1*J2 + J1*l2**2*m2 + J2*l1**2*m1 + J2*l1**2*m2 + l1**2*l2**2*m1*m2 + l1**2*l2**2*m2**2*sp.sin(x5)**2)])
+            self.x_dot = eval(load('examples/'+self.name+'.str')['x_dot_str'])
 
             self.x_0 = np.array([0, 0, np.pi, 0, np.pi, 0])
             self.x_f = np.array([0, 0, 0, 0, 0, 0])
 #            self.u_0 = np.zeros(self.u_dim)
 #            self.u_f = np.zeros(self.u_dim)
             self.t_0 = 0
-            self.t_f = 2
+            self.t_f = 3
 
             self.x_min = -np.inf*np.ones(self.x_dim)
             self.x_max = np.inf*np.ones(self.x_dim)
-#            self.x_min[0] = -2
-#            self.x_max[0] = 2
+#            self.x_min[0] = -3
+#            self.x_max[0] = 3
+            self.u_min = -np.inf*np.ones(self.u_dim)
+            self.u_max = np.inf*np.ones(self.u_dim)
+#            self.u_min = 0*np.ones(self.u_dim)
+#            self.u_max = 0*np.ones(self.u_dim)
+
+            self.Q = sp.diag(*np.ones(self.x_dim))
+            self.R = sp.diag(*np.ones(self.u_dim))
+            self.S = sp.diag(*np.ones(self.x_dim))
+
+
+        elif self.name is 'triple_pend_cart_pl':
+            # partially linearized triple pendulum on cart
+            # length, center of mass, mass, and moment of inertia of the pendulums
+            l1 = 0.5
+            l2 = 0.5
+            l3 = 0.5
+            s1 = l1/2
+            s2 = l2/2
+            s3 = l3/2
+            m1 = 0.1
+            m2 = 0.1
+            m3 = 0.1
+            J1 = 4/3*m1*l1**2
+            J2 = 4/3*m2*l2**2
+            J3 = 4/3*m3*l3**2
+
+            m0 = 1.0    # mass of the cart
+            g = 9.81    # gravitational acceleration
+
+            self.x_dict = {'1': 's', '2': 'v', '3': 'theta1', '4': 'omega1', '5': 'theta2', '6': 'omega2', '7': 'theta3', '8': 'omega3'}
+            self.u_dict = {'1': 'a'}
+
+            self.x_dot = eval(load('examples/'+self.name+'.str')['x_dot_str'])
+
+            self.x_0 = np.array([0, 0, np.pi, 0, np.pi, 0, np.pi, 0])
+            self.x_f = np.array([0, 0, 0, 0, 0, 0, 0, 0])
+#            self.u_0 = np.zeros(self.u_dim)
+#            self.u_f = np.zeros(self.u_dim)
+            self.t_0 = 0
+            self.t_f = 3.5
+
+            self.x_min = -np.inf*np.ones(self.x_dim)
+            self.x_max = np.inf*np.ones(self.x_dim)
+#            self.x_min[0] = -3
+#            self.x_max[0] = 3
             self.u_min = -np.inf*np.ones(self.u_dim)
             self.u_max = np.inf*np.ones(self.u_dim)
 

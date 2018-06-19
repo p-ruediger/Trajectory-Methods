@@ -735,10 +735,12 @@ class ocp_dcm_solver(ocp_d_solver):
 if __name__ is '__main__':
 
 
-    problem_names = {'1': 'double_int', '2': 'simple_pend', '3': 'pend_cart_pl', '4': 'pend_cart', '5': 'dual_pend_cart_pl',
-                     '6': 'dual_pend_cart', '7': 'vtol', '8': 'ua_manipulator_pl', '9': 'acrobot_pl', '10': 'double_pend_cart_pl'}
+    problem_names = {'1': 'double_int', '2': 'simple_pend', '3': 'simple_pend_cart_pl', '4': 'simple_pend_cart',
+                     '5': 'pend_cart_pl', '6': 'pend_cart', '7': 'simple_dual_pend_cart_pl', '8': 'simple_dual_pend_cart',
+                     '9': 'dual_pend_cart_pl', '10': 'dual_pend_cart', '11': 'vtol', '12': 'ua_manipulator_pl', '13': 'acrobot_pl',
+                     '14': 'double_pend_cart_pl', '15': 'triple_pend_cart_pl'}
 
-    problem = problem_names['3']
+    problem = problem_names['1']
     ocp1 = ocp(problem)
 
     h_sim = 0.001
