@@ -16,15 +16,10 @@ import numpy as np
 from joblib import load
 
 
-def get_x_dot_matrices(q_dot, M, K):
-    # q_dot: specific elements of self.x
-    return sp.simplify(sp.Matrix([q_dot, -M.inv()*K]))
-
-
 # lists of problems by dimensions
-dim21_problems = ['double_int', 'simple_pend']
-dim41_problems = ['simple_pend_cart_pl', 'simple_pend_cart', 'pend_cart_pl', 'pend_cart', 'ua_manipulator_pl', 'acrobot_pl']
-dim61_problems = ['simple_dual_pend_cart_pl', 'simple_dual_pend_cart', 'dual_pend_cart_pl', 'dual_pend_cart', 'double_pend_cart_pl']
+dim21_problems = ['double_int', 'pend']
+dim41_problems = ['pend_cart_pl', 'pend_cart', 'ua_manipulator_pl', 'acrobot_pl']
+dim61_problems = ['dual_pend_cart_pl', 'dual_pend_cart', 'double_pend_cart_pl']
 dim62_problems = ['vtol']
 dim81_problems = ['triple_pend_cart_pl']
 
@@ -43,7 +38,7 @@ pi = 3.1415926535897932384626433832795028841971693993
 class ocp(object):
 
 
-    def __init__(self, name):
+    def __init__(self, name, has_objective=True, c=None):
         self.x_dim = None
         self.u_dim = None
         self.x = None
@@ -66,13 +61,14 @@ class ocp(object):
         self.S = None
         self.x_dict = None
         self.u_dict = None
-        self.has_objective = None
         self.H = None
         self.y_dot = None
         self.Hu = None
         self.u_noc = None
         self.z_dot = None
 
+        self.has_objective = has_objective
+        self.c = c
         self.name = name
         if self.name not in [*dim21_problems, *dim41_problems, *dim61_problems, *dim62_problems, *dim81_problems]: print('Error: Not Implemented')
         assert self.name in [*dim21_problems, *dim41_problems, *dim61_problems, *dim62_problems, *dim81_problems]
@@ -115,21 +111,16 @@ class ocp(object):
             self.t_0 = 0
             self.t_f = 2
 
-            self.x_min = -np.inf*np.ones(self.x_dim)
-            self.x_max = np.inf*np.ones(self.x_dim)
             self.x_min[1] = 0
             self.x_max[1] = 0.65
-#            self.u_min = -np.inf*np.ones(self.u_dim)
-#            self.u_max = np.inf*np.ones(self.u_dim)
             self.u_min = -2*np.ones(self.u_dim)
             self.u_max = 2*np.ones(self.u_dim)
 
             self.Q = sp.diag(*np.ones(self.x_dim))
             self.R = sp.diag(*np.ones(self.u_dim))
-            self.S = sp.diag(*np.ones(self.x_dim))
 
 
-        elif self.name is 'simple_pend':
+        elif self.name is 'pend':
             # simple pendulum
             l = 0.5     # length of the pendulum
             g = 9.81    # gravitational acceleration
@@ -152,59 +143,53 @@ class ocp(object):
 
             self.Q = sp.diag(*np.ones(self.x_dim))
             self.R = sp.diag(*np.ones(self.u_dim))
-            self.S = sp.diag(*np.ones(self.x_dim))
 
 
-        elif self.name in ['simple_pend_cart_pl', 'simple_pend_cart', 'pend_cart_pl', 'pend_cart']:
-            # (simple) (partially linearized) pendulum on cart
-            l1 = 0.5            # length of the pendulum
-            s1 = l1/2           # center of mass of the pendulum
+        elif self.name in ['pend_cart_pl', 'pend_cart']:
+            # (partially linearized) pendulum on cart
+            s1 = 0.25           # center of mass of the pendulum
             m1 = 0.1            # mass of the pendulum
-            J1 = 4/3*m1*l1**2   # moment of inertia of the pendulum
             m0 = 1.0            # mass of the cart
             g = 9.81            # gravitational acceleration
 
             self.x_dict = {'1': 's', '2': 'v', '3': 'theta', '4': 'omega'}
-            self.u_dict = {'1': 'a'}
+            if 'pl' in self.name: self.u_dict = {'1': 'a'}
+            else: self.u_dict = {'1': 'F'}
 
             self.x_dot = eval(load('examples/'+self.name+'.str')['x_dot_str'])
 
             self.x_0 = np.array([0, 0, np.pi, 0])
+#            self.x_0 = np.array([0, 0, 45/180*np.pi, 0])
             self.x_f = np.array([0, 0, 0, 0])
-#            self.u_0 = np.zeros(self.u_dim)
-#            self.u_f = np.zeros(self.u_dim)
             self.t_0 = 0
-            self.t_f = 2
+#            self.t_f = 1
+            self.t_f = self.c
 
             self.x_min = -np.inf*np.ones(self.x_dim)
             self.x_max = np.inf*np.ones(self.x_dim)
             self.u_min = -np.inf*np.ones(self.u_dim)
             self.u_max = np.inf*np.ones(self.u_dim)
-#            self.u_min = -70*np.ones(self.u_dim)
-#            self.u_max = 70*np.ones(self.u_dim)
+            self.u_min = -100*np.ones(self.u_dim)
+            self.u_max = 100*np.ones(self.u_dim)
 
-            self.Q = sp.diag(1,0,1,0)
-            self.R = sp.diag(1)
-            self.S = sp.diag(*np.ones(self.x_dim))
+            self.Q = sp.diag(*np.ones(self.x_dim))
+            self.R = sp.diag(*np.ones(self.u_dim))
 
 
-        elif self.name in ['simple_dual_pend_cart_pl', 'simple_dual_pend_cart', 'dual_pend_cart_pl', 'dual_pend_cart']:
-            # (simple) (partially linearized) dual pendulum on cart
-            # length, center of mass, mass, and moment of inertia of the pendulums
-            l1 = 0.7
-            s1 = l1/2
-            m1 = 0.7
-            J1 = 4/3*m1*l1**2
-            l2 = 0.5
-            s2 = l1/2
-            m2 = 0.5
-            J2 = 4/3*m1*l1**2
-
+        elif self.name in ['dual_pend_cart_pl', 'dual_pend_cart']:
+            # ((partially linearized) dual pendulum on cart
+            # center of mass, and mass of the pendulums
+#            s1 = 0.7
+            s1 = self.c
+#            m1 = 0.7
+            s2 = 0.5
+#            m2 = 0.5
             m0 = 1.0    # mass of the cart
             g = 9.81    # gravitational acceleration
 
             self.x_dict = {'1': 's', '2': 'v', '3': 'theta1', '4': 'omega1', '5': 'theta2', '6': 'omega2'}
-            self.u_dict = {'1': 'a'}
+            if 'pl' in self.name: self.u_dict = {'1': 'a'}
+            else: self.u_dict = {'1': 'F'}
 
             self.x_dot = eval(load('examples/'+self.name+'.str')['x_dot_str'])
 
@@ -217,16 +202,13 @@ class ocp(object):
 
             self.x_min = -np.inf*np.ones(self.x_dim)
             self.x_max = np.inf*np.ones(self.x_dim)
-#            self.x_min[0] = -2
-#            self.x_max[0] = 2
-            self.u_min = -np.inf*np.ones(self.u_dim)
-            self.u_max = np.inf*np.ones(self.u_dim)
-#            self.u_min = -100*np.ones(self.u_dim)
-#            self.u_max = 100*np.ones(self.u_dim)
+#            self.u_min = -np.inf*np.ones(self.u_dim)
+#            self.u_max = np.inf*np.ones(self.u_dim)
+            self.u_min = -100*np.ones(self.u_dim)
+            self.u_max = 100*np.ones(self.u_dim)
 
-            self.Q = sp.diag(1,0,1,0,1,0)
-            self.R = sp.diag(1)
-            self.S = sp.diag(*np.ones(self.x_dim))
+            self.Q = sp.diag(*np.ones(self.x_dim))
+            self.R = sp.diag(*np.ones(self.u_dim))
 
 
         elif self.name is 'vtol':
@@ -269,9 +251,8 @@ class ocp(object):
             self.u_min = -np.inf*np.ones(self.u_dim)
             self.u_max = np.inf*np.ones(self.u_dim)
 
-            self.Q = sp.diag(1,0,1,0,1,0)
+            self.Q = sp.diag(*np.ones(self.x_dim))
             self.R = sp.diag(*np.ones(self.u_dim))
-            self.S = sp.diag(*np.ones(self.x_dim))
 
 
         elif self.name is 'ua_manipulator_pl':
@@ -290,8 +271,6 @@ class ocp(object):
 
             self.x_0 = np.array([0, 0, 0.4*np.pi, 0])
             self.x_f = np.array([0.2*np.pi, 0, 0.2*np.pi, 0])
-#            self.u_0 = np.zeros(self.u_dim)
-#            self.u_f = np.zeros(self.u_dim)
             self.t_0 = 0
             self.t_f = 1.8
 
@@ -302,7 +281,6 @@ class ocp(object):
 
             self.Q = sp.diag(*np.ones(self.x_dim))
             self.R = sp.diag(*np.ones(self.u_dim))
-            self.S = sp.diag(*np.ones(self.x_dim))
 
 
         elif self.name is 'acrobot_pl':
@@ -330,8 +308,6 @@ class ocp(object):
 
             self.x_0 = np.array([0, 0, 1.5*np.pi, 0])
             self.x_f = np.array([0, 0, 0.5*np.pi, 0])
-#            self.u_0 = np.zeros(self.u_dim)
-#            self.u_f = np.zeros(self.u_dim)
             self.t_0 = 0
             self.t_f = 2
 
@@ -342,7 +318,6 @@ class ocp(object):
 
             self.Q = sp.diag(*np.ones(self.x_dim))
             self.R = sp.diag(*np.ones(self.u_dim))
-            self.S = sp.diag(*np.ones(self.x_dim))
 
 
         elif self.name is 'double_pend_cart_pl':
@@ -365,25 +340,18 @@ class ocp(object):
 
             self.x_dot = eval(load('examples/'+self.name+'.str')['x_dot_str'])
 
-            self.x_0 = np.array([0, 0, np.pi, 0, np.pi, 0])
+            self.x_0 = np.array([0, 0, np.pi, 0, 0, 0])
             self.x_f = np.array([0, 0, 0, 0, 0, 0])
-#            self.u_0 = np.zeros(self.u_dim)
-#            self.u_f = np.zeros(self.u_dim)
             self.t_0 = 0
             self.t_f = 3
 
             self.x_min = -np.inf*np.ones(self.x_dim)
             self.x_max = np.inf*np.ones(self.x_dim)
-#            self.x_min[0] = -3
-#            self.x_max[0] = 3
-            self.u_min = -np.inf*np.ones(self.u_dim)
-            self.u_max = np.inf*np.ones(self.u_dim)
-#            self.u_min = 0*np.ones(self.u_dim)
-#            self.u_max = 0*np.ones(self.u_dim)
+            self.u_min = -100*np.ones(self.u_dim)
+            self.u_max = 100*np.ones(self.u_dim)
 
             self.Q = sp.diag(*np.ones(self.x_dim))
             self.R = sp.diag(*np.ones(self.u_dim))
-            self.S = sp.diag(*np.ones(self.x_dim))
 
 
         elif self.name is 'triple_pend_cart_pl':
@@ -410,30 +378,31 @@ class ocp(object):
 
             self.x_dot = eval(load('examples/'+self.name+'.str')['x_dot_str'])
 
-            self.x_0 = np.array([0, 0, np.pi, 0, np.pi, 0, np.pi, 0])
+            self.x_0 = np.array([0, 0, np.pi, 0, 0, 0, 0, 0])
             self.x_f = np.array([0, 0, 0, 0, 0, 0, 0, 0])
-#            self.u_0 = np.zeros(self.u_dim)
-#            self.u_f = np.zeros(self.u_dim)
             self.t_0 = 0
-            self.t_f = 3.5
+            self.t_f = 4
 
-            self.x_min = -np.inf*np.ones(self.x_dim)
-            self.x_max = np.inf*np.ones(self.x_dim)
-#            self.x_min[0] = -3
-#            self.x_max[0] = 3
+#            self.x_min = -np.inf*np.ones(self.x_dim)
+#            self.x_max = np.inf*np.ones(self.x_dim)
+            self.x_min = -np.array([np.inf, np.inf, 2*np.pi, np.inf, 2*np.pi, np.inf, 2*np.pi, np.inf])
+            self.x_max = np.array([np.inf, np.inf, 2*np.pi, np.inf, 2*np.pi, np.inf, 2*np.pi, np.inf])
             self.u_min = -np.inf*np.ones(self.u_dim)
             self.u_max = np.inf*np.ones(self.u_dim)
+#            self.u_min = -100*np.ones(self.u_dim)
+#            self.u_max = 100*np.ones(self.u_dim)
 
             self.Q = sp.diag(*np.ones(self.x_dim))
             self.R = sp.diag(*np.ones(self.u_dim))
-            self.S = sp.diag(*np.ones(self.x_dim))
 
 
-        self.L = ((self.x.T - np.reshape(self.x_f, (1,self.x_dim)))*self.Q*(self.x - np.reshape(self.x_f, (self.x_dim,1)))
-                        + self.u.T*self.R*self.u)
-        self.E = (self.x.T - np.reshape(self.x_f, (1,self.x_dim)))*self.S*(self.x - np.reshape(self.x_f, (self.x_dim,1)))
+        if self.has_objective:
+            self.L = ((self.x.T - np.reshape(self.x_f, (1,self.x_dim)))*self.Q*(self.x - np.reshape(self.x_f, (self.x_dim,1)))
+                    + self.u.T*self.R*self.u)
 
-        self.has_objective = (np.any(np.array(self.Q) != 0) or np.any(np.array(self.R) != 0))
+            self.has_objective = (np.any(np.array(self.Q) != 0) or np.any(np.array(self.R) != 0))
+        else:
+            self.L = [0]
 
 
     def setup_optbvp(self):

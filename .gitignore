@@ -47,3 +47,6 @@ Temporary Items
 .apdisk
 *.pyc
 *.ini
+*.txt
+*.dat
+*.pdf

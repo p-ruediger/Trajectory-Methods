@@ -10,6 +10,8 @@ import numpy as np
 from joblib import dump, load
 from matplotlib import pyplot as plt
 
+
+
 class plot(object):
 
     def __init__(self, xarray):
@@ -18,20 +20,21 @@ class plot(object):
         self.xarray = xarray
 
 
-    def add_subplot(self, yarrays, ylabel, labels, lpad, colors, linestyles, drawstyles):
+    def add_subplot(self, yarrays, ylabel, labels, colors, linestyles, drawstyles, linewidths):
 
-        subplot = {'yarrays': yarrays, 'ylabel': ylabel, 'labels': labels, 'lpad': lpad, 'colors': colors,
-                   'linestyles': linestyles, 'drawstyles': drawstyles}
+        subplot = {'yarrays': yarrays, 'ylabel': ylabel, 'labels': labels, 'colors': colors,
+                   'linestyles': linestyles, 'drawstyles': drawstyles, 'linewidths': linewidths}
         self.subplots.append(subplot)
 
 
-    def append_subplot(self, yarray, label, lpad, color, linestyles, drawstyles):
+    def append_subplot(self, yarray, label, color, linestyle, drawstyle, linewidth):
 
         self.subplots[-1]['yarrays'].append(yarray)
         self.subplots[-1]['labels'].append(label)
         self.subplots[-1]['colors'].append(color)
-        self.subplots[-1]['linestyles'].append(linestyles)
-        self.subplots[-1]['drawstyles'].append(drawstyles)
+        self.subplots[-1]['linestyles'].append(linestyle)
+        self.subplots[-1]['drawstyles'].append(drawstyle)
+        self.subplots[-1]['linewidths'].append(linewidth)
 
 
     def save_plot(self, filename):
@@ -41,7 +44,7 @@ class plot(object):
         except Exception:
             pass
         plot = {'xarray': self.xarray, 'subplots': self.subplots}
-        dump(plot, 'plots/'+filename)
+        dump(plot, 'plots/' + filename + '.plt')
 
 
     def load_plotfile(self, filename):
@@ -60,7 +63,7 @@ class plot(object):
         self.save_plot(filename)
 
 
-    def create_plot(self, filename, xlabel, ymin, ymax, fig_size, font_size):
+    def create_plot(self, filename, xlabel, ymins, ymaxs, ylpad, fig_size, font_size):
 
         params = {'backend': 'pdf',
                   'axes.labelsize': font_size,
@@ -79,26 +82,31 @@ class plot(object):
         except Exception:
             pass
 
-        plt.figure(filename)
+        fig = plt.figure(filename)
         axs = []
         for i in range(len(self.subplots)):
             axs.append(plt.subplot(int(str(len(self.subplots))+'1'+str(i+1))))
             for j in range(len(self.subplots[i]['yarrays'])):
                 plt.plot(self.xarray, self.subplots[i]['yarrays'][j], label=self.subplots[i]['labels'][j], color=self.subplots[i]['colors'][j],
-                         linestyle=self.subplots[i]['linestyles'][j], drawstyle=self.subplots[i]['drawstyles'][j])
+                         linestyle=self.subplots[i]['linestyles'][j], drawstyle=self.subplots[i]['drawstyles'][j], linewidth=self.subplots[i]['linewidths'][j])
             if self.subplots[i]['labels'][j] is not None: plt.legend(loc=0)
-            plt.ylabel(self.subplots[i]['ylabel'], rotation=0, labelpad=self.subplots[i]['lpad'])
+            plt.ylabel(self.subplots[i]['ylabel'], rotation=0, labelpad=ylpad)
             plt.margins(x=0.02)
 #            plt.margins(tight=True)
-            plt.ylim(ymin=ymin, ymax=ymax)
+            if ymins is not None:
+                plt.ylim(ymin=ymins[i])
+            if ymaxs is not None:
+                plt.ylim(ymax=ymaxs[i])
             plt.grid(True)
             plt.setp(axs[i].get_xticklabels(), visible=(i==len(self.subplots)-1))
 
         plt.xlabel(xlabel)
         plt.tight_layout()
+        fig.align_labels()
         plt.show()
         plt.savefig('./plots/'+filename+'.pdf')
 #        plt.savefig('./plots/'+filename+'.png')
+
 
 
 class grid_plot(object):
@@ -123,6 +131,7 @@ class grid_plot(object):
         plt.ylabel(ylabel, rotation=0, labelpad=30)
         cb = fig.colorbar(p)
         cb.ax.set_ylabel(zlabel, rotation=0, labelpad=30)
+
 
 
 if __name__ == '__main__':

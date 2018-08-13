@@ -6,10 +6,10 @@ Created on Mon May 14 12:35:31 2018
 '''
 
 #     Partially based on CasADi examples.
+#     https://github.com/casadi/casadi/tree/master/docs/examples/python
 #
 #     CasADi -- A symbolic framework for dynamic optimization.
-#     Copyright (C) 2010-2014 Joel Andersson, Joris Gillis, Moritz Diehl,
-#                             K.U. Leuven. All rights reserved.
+#     Copyright (C) 2010-2014 Joel Andersson, Joris Gillis, Moritz Diehl, K.U. Leuven. All rights reserved.
 #     Copyright (C) 2011-2014 Greg Horn
 #
 #     CasADi is free software; you can redistribute it and/or
@@ -30,9 +30,9 @@ import numpy as np
 import sympy as sp
 import symbtools as st
 import casadi as ca
-#from plotter import plot as plt
 import matplotlib.pyplot as plt
 from scipy.interpolate import interp1d
+#import time
 from ocp import ocp
 
 
@@ -64,6 +64,8 @@ class ocp_solver(object):
         self.tgrid_sim = None
         self.u_opt = None
         self.x_opt = None
+        self.nlp_solver = None
+        self.stats = {'success': None, 'iters': None, 'time': None, 'time_per_iter': None, 'x_f_dev': None, 'J': None}
 
         self.ocp = ocp
 
@@ -72,7 +74,7 @@ class ocp_solver(object):
 
 
     def initialize(self, h_sim, N, M, u_ig, x_ig, y_ig):
-        self.int_tol = 1e-10
+        self.int_tol = 1e-12
         self.h_sim = h_sim
         if u_ig is not None: self.u_ig = u_ig
         if x_ig is not None: self.x_ig = x_ig
@@ -80,26 +82,23 @@ class ocp_solver(object):
         if N is not None: self.N = N
         if M is not None: self.M = M
 
-        # Time grid for simulation
-        self.tgrid_sim = np.linspace(self.ocp.t_0, self.ocp.t_f, round((self.ocp.t_f - self.ocp.t_0)/self.h_sim)+1)
 
-
-    def plot_trajectory(self, step_u=False):
+    def plot_trajectory(self):
+        plt.rcParams.update(plt.rcParamsDefault)
         plt.figure(1)
         legend = []
         for i in range(self.ocp.x_dim):
             plt.plot(self.tgrid_sim, self.x_opt[i,:].T, '-')
             legend.append('x_'+ str(i+1) + ': ' + self.ocp.x_dict[str(i+1)])
         for i in range(self.ocp.u_dim):
-            if not step_u:
-                plt.plot(self.tgrid_sim[0:-1], self.u_opt[i,:].T, '-')
-            else:
-                plt.step(self.tgrid_sim[0:-1], self.u_opt[i,:].T, '-', where='post')
+            plt.plot(self.tgrid_sim[0:-1], self.u_opt[i,:].T, '-', drawstyle=self.u_type, linewidth=1.0)
             legend.append('u_'+ str(i+1) + ': ' + self.ocp.u_dict[str(i+1)])
         plt.xlabel('t')
         plt.legend(legend)
         plt.grid()
         plt.show()
+
+        print(self.stats)
 
 
 
@@ -117,6 +116,8 @@ class ocp_i_solver(ocp_solver):
         self.nlpsol_opts = None
         self.z_opt = None
 
+        self.u_type = 'default'
+
         super(ocp_i_solver, self).__init__(ocp)
 
         if not self.ocp.has_objective: print('Error: No objective')
@@ -125,6 +126,21 @@ class ocp_i_solver(ocp_solver):
 
 
     def initialize_ca(self):
+        # Time grid for simulation
+        self.tgrid_sim = np.linspace(self.ocp.t_0, self.ocp.t_f, round((self.ocp.t_f - self.ocp.t_0)/self.h_sim)+1)
+
+        self.x_dot = []
+        for element in self.ocp.x_dot:
+            element_str_replaced = str_replace_all(str(element), ca_replacements)
+            self.x_dot.append(eval(element_str_replaced))
+        self.x_dot = ca.vertcat(*self.x_dot)
+
+        self.L = []
+        for element in self.ocp.L:
+            element_str_replaced = str_replace_all(str(element), ca_replacements)
+            self.L.append(eval(element_str_replaced))
+        self.L = ca.vertcat(*self.L)
+
         self.y = ca.MX.sym('y', self.ocp.x_dim)
 
         self.u_opt = []
@@ -149,23 +165,38 @@ class ocp_i_solver(ocp_solver):
         self.u_opt_fcn = ca.Function('u_opt_fcn', [self.z], [self.u_opt])
 
         self.ode = {'x': self.z, 'ode': self.z_dot}
+        self.ode2 = {'x': self.x, 'p': self.u, 'ode': self.x_dot, 'quad': self.L}
 
         # Simulator to get optimal state and control trajectories
-        self.simulator = ca.integrator('simulator', 'cvodes', self.ode, {'grid':self.tgrid_sim,'output_t0':True, 'abstol': self.int_tol, 'reltol': self.int_tol})
+        self.simulator = ca.integrator('simulator', 'cvodes', self.ode, {'grid': self.tgrid_sim, 'output_t0': True, 'abstol': self.int_tol, 'reltol': self.int_tol})
+        self.quad = ca.integrator('quad', 'cvodes', self.ode2, {'tf': self.h_sim, 'abstol': self.int_tol, 'reltol': self.int_tol})
 
         self.nlpsol_opts = {'nlpsol': 'ipopt',
-                            'nlpsol_options': {'ipopt.hessian_approximation': 'limited-memory', 'ipopt.max_iter': 1e3, 'ipopt.tol': 1e-8, 'ipopt.constr_viol_tol': 1e-4, 'ipopt.compl_inf_tol': 1e-4, 'ipopt.dual_inf_tol': 1,
-                                               'ipopt.acceptable_tol': 1e-4, 'ipopt.acceptable_constr_viol_tol': 1e-4, 'ipopt.acceptable_compl_inf_tol': 1e-4,
+                            'nlpsol_options': {'ipopt.max_iter': 1e3, 'ipopt.tol': 1e-6, 'ipopt.constr_viol_tol': 1e-4, 'ipopt.compl_inf_tol': 1e-4, 'ipopt.dual_inf_tol': 1,
+                                               'ipopt.acceptable_tol': 1e-6, 'ipopt.acceptable_constr_viol_tol': 1e-4, 'ipopt.acceptable_compl_inf_tol': 1e-4,
                                                'ipopt.acceptable_dual_inf_tol': 1}}
 
 
     def get_trajectory(self):
         u_fcn = self.u_opt_fcn.map(len(self.tgrid_sim))
-        self.u_opt = u_fcn(self.z_opt)[0:-1]
+        self.u_opt = u_fcn(self.z_opt)[0:-1].full()
         self.x_opt = np.zeros((0,len(self.tgrid_sim)))
         for i in range(self.ocp.x_dim):
             self.x_opt = np.append(self.x_opt, self.z_opt[i,:])
         self.x_opt = np.reshape(self.x_opt, (self.ocp.x_dim,len(self.tgrid_sim)))
+
+        stats = self.nlp_solver.stats()
+        self.stats['success'] = stats['nlpsol']['success']
+        self.stats['time'] = stats['nlpsol']['t_wall_nlpsol']
+        self.stats['iters'] = stats['nlpsol']['iter_count']
+
+        self.stats['time_per_iter'] = self.stats['time']/self.stats['iters']
+        self.stats['x_f_dev'] = np.linalg.norm(self.x_opt[:,-1] - self.ocp.x_f)
+
+        J = 0
+        for i in range(len(self.tgrid_sim)-1):
+            J += self.quad(x0=self.x_opt[:,i], p=self.u_opt[:,i])['qf'].full()[0][0]
+        self.stats['J'] = J
 
 
 
@@ -176,7 +207,7 @@ class ocp_issm_solver(ocp_i_solver):
         super(ocp_issm_solver, self).__init__(ocp)
 
 
-    def solve(self, h_sim, y_ig=None):
+    def solve(self, h_sim, y_ig=None, plot=False):
         self.initialize(h_sim, None, None, None, None, y_ig)
         self.initialize_ca()
 
@@ -195,19 +226,19 @@ class ocp_issm_solver(ocp_i_solver):
         rfp = ca.Function('rfp', [y_0], [x_f])
 
         # Allocate an implict solver
-        solver = ca.rootfinder('solver', 'nlpsol', rfp, self.nlpsol_opts)
+        self.nlp_solver = ca.rootfinder('solver', 'nlpsol', rfp, self.nlpsol_opts)
 
         # Solve the problem
         if y_ig is None:
-            y_0_opt = np.array(solver(0).nonzeros())
+            y_0_opt = np.array(self.nlp_solver(0).nonzeros())
         else:
-            y_0_opt = np.array(solver(y_ig).nonzeros())
+            y_0_opt = np.array(self.nlp_solver(y_ig).nonzeros())
 
         # Simulate to get the state trajectory
         self.z_opt = self.simulator(x0=np.concatenate((self.ocp.x_0, y_0_opt)))['xf']
 
         self.get_trajectory()
-        self.plot_trajectory()
+        if plot: self.plot_trajectory()
 
 
 
@@ -218,7 +249,7 @@ class ocp_imsm_solver(ocp_i_solver):
         super(ocp_imsm_solver, self).__init__(ocp)
 
 
-    def solve(self, h_sim, N, x_ig=None, y_ig=None):
+    def solve(self, h_sim, N, x_ig=None, y_ig=None, plot=False):
         self.initialize(h_sim, N, None, None, x_ig, y_ig)
         self.initialize_ca()
 
@@ -245,19 +276,19 @@ class ocp_imsm_solver(ocp_i_solver):
         rfp = ca.Function('rfp', [V], [ca.vertcat(*G)])
 
         # Allocate a solver
-        solver = ca.rootfinder('solver', 'nlpsol', rfp, self.nlpsol_opts)
+        self.nlp_solver = ca.rootfinder('solver', 'nlpsol', rfp, self.nlpsol_opts)
 
         # Solve the problem
         if np.any(x_ig == None) or np.any(y_ig == None):
-            z_opt = solver(0)
+            z_opt = self.nlp_solver(0)
         else:
-            z_opt = solver(np.ravel(np.concatenate([x_ig, y_ig]), 'F'))
+            z_opt = self.nlp_solver(np.ravel(np.concatenate([x_ig, y_ig]), 'F'))
 
         # Simulate to get the trajectories
         self.z_opt = self.simulator(x0=z_opt[0:2*self.ocp.x_dim])['xf']
 
         self.get_trajectory()
-        self.plot_trajectory()
+        if plot: self.plot_trajectory()
 
 
 
@@ -270,7 +301,7 @@ class ocp_icm_solver(ocp_i_solver):
         super(ocp_icm_solver, self).__init__(ocp)
 
 
-    def solve(self, h_sim, N, M, x_ig=None, y_ig=None):
+    def solve(self, h_sim, N, M, x_ig=None, y_ig=None, plot=False):
         self.initialize(h_sim, N, M, None, x_ig, y_ig)
         self.initialize_ca()
         self.h_N = (self.ocp.t_f - self.ocp.t_0)/self.N
@@ -335,22 +366,24 @@ class ocp_icm_solver(ocp_i_solver):
 
         G.append(Z[self.N*(self.M+1)][0:self.ocp.x_dim] - self.ocp.x_f)
 
-        rfp = ca.Function('rfp', [V], [ca.vertcat(*G)])
+        G = ca.vertcat(*G)
+
+        rfp = ca.Function('rfp', [V], [G])
 
         # Allocate a solver
-        solver = ca.rootfinder('solver', 'nlpsol', rfp, self.nlpsol_opts)
+        self.nlp_solver = ca.rootfinder('solver', 'nlpsol', rfp, self.nlpsol_opts)
 
         # Solve the problem
         if None in [x_ig, y_ig]:
-            z_opt = solver(0)
+            z_opt = self.nlp_solver(0)
         else:
-            z_opt = solver(np.ravel(np.concatenate([x_ig, y_ig]), 'F'))
+            z_opt = self.nlp_solver(np.ravel(np.concatenate([x_ig, y_ig]), 'F'))
 
         # Simulate to get the trajectories
         self.z_opt = self.simulator(x0=z_opt[0:2*self.ocp.x_dim])['xf']
 
         self.get_trajectory()
-        self.plot_trajectory()
+        if plot: self.plot_trajectory()
 
 
 
@@ -361,12 +394,20 @@ class ocp_d_solver(ocp_solver):
         self.h_N = None
         self.tgrid_N = None
 
+        self.u_type = 'steps-post'
+
         super(ocp_d_solver, self).__init__(ocp)
 
 
     def initialize_ca(self):
         self.h_N = (self.ocp.t_f - self.ocp.t_0)/self.N
         self.tgrid_N = np.linspace(self.ocp.t_0, self.ocp.t_f, self.N+1)
+        if self.h_N > self.h_sim:
+            self.h_sim = self.h_N/round(self.h_N/self.h_sim)
+        else:
+            self.h_sim = self.h_N
+        # Time grid for simulation
+        self.tgrid_sim = np.linspace(self.ocp.t_0, self.ocp.t_f, round((self.ocp.t_f - self.ocp.t_0)/self.h_sim)+1)
 
         self.x_dot = []
         for element in self.ocp.x_dot:
@@ -381,10 +422,8 @@ class ocp_d_solver(ocp_solver):
         self.L = ca.vertcat(*self.L)
 
         # CVODES from the SUNDIALS suite
-        self.dae = {'x': self.x, 'p': self.u, 'ode': self.x_dot, 'quad': self.L}
-        self.I = ca.integrator('I', 'cvodes', self.dae, {'tf': self.h_N, 'abstol': self.int_tol, 'reltol': self.int_tol})
-
-        self.ode = {'x': self.x, 'p': self.u, 'ode': self.x_dot}
+        self.ode = {'x': self.x, 'p': self.u, 'ode': self.x_dot, 'quad': self.L}
+        self.I = ca.integrator('I', 'cvodes', self.ode, {'tf': self.h_N, 'abstol': self.int_tol, 'reltol': self.int_tol})
         self.simulator = ca.integrator('simulator', 'cvodes', self.ode, {'tf': self.h_sim, 'abstol': self.int_tol, 'reltol': self.int_tol})
 
         # Start with an empty NLP
@@ -397,16 +436,29 @@ class ocp_d_solver(ocp_solver):
         self.lbg = []
         self.ubg = []
 
-        self.ipopt_opts = {'ipopt': {'max_iter': 1e3, 'tol': 1e-8, 'constr_viol_tol': 1e-4, 'compl_inf_tol': 1e-4, 'dual_inf_tol': 1,
-                                     'acceptable_tol': 1e-4, 'acceptable_constr_viol_tol': 1e-4, 'acceptable_compl_inf_tol': 1e-4,
+        self.ipopt_opts = {'ipopt': {'max_iter': 5e3, 'tol': 1e-6, 'constr_viol_tol': 1e-4, 'compl_inf_tol': 1e-4, 'dual_inf_tol': 1,
+                                     'acceptable_tol': 1e-6, 'acceptable_constr_viol_tol': 1e-4, 'acceptable_compl_inf_tol': 1e-4,
                                      'acceptable_dual_inf_tol': 1}}
 
 
     def get_trajectory(self):
         self.x_opt = np.reshape(self.ocp.x_0, (self.ocp.x_dim,1))
+        J = 0
         for i in range(len(self.tgrid_sim)-1):
-            x_opt_i = self.simulator(x0=self.x_opt[:,-1], p=self.u_opt[:,i])
-            self.x_opt = np.append(self.x_opt, np.reshape(np.array(x_opt_i['xf'].full()), (self.ocp.x_dim,1)), axis=1)
+            sim_i = self.simulator(x0=self.x_opt[:,-1], p=self.u_opt[:,i])
+            self.x_opt = np.append(self.x_opt, np.reshape(np.array(sim_i['xf'].full()), (self.ocp.x_dim,1)), axis=1)
+            J += sim_i['qf'].full()[0][0]
+
+        self.stats['J'] = J
+
+        stats = self.nlp_solver.stats()
+#        self.stats['J'] = stats['iterations']['obj'][-1]
+        self.stats['success'] = stats['success']
+        self.stats['time'] = stats['t_wall_solver']
+        self.stats['iters'] = stats['iter_count']
+
+        self.stats['time_per_iter'] = self.stats['time']/self.stats['iters']
+        self.stats['x_f_dev'] = np.linalg.norm(self.x_opt[:,-1] - self.ocp.x_f)
 
 
 
@@ -417,7 +469,7 @@ class ocp_dssm_solver(ocp_d_solver):
         super(ocp_dssm_solver, self).__init__(ocp)
 
 
-    def solve(self, h_sim, N, u_ig=None):
+    def solve(self, h_sim, N, u_ig=None, plot=False):
         self.initialize(h_sim, N, None, u_ig, None, None)
         self.initialize_ca()
 
@@ -452,16 +504,16 @@ class ocp_dssm_solver(ocp_d_solver):
 
         # Create an NLP solver
         prob = {'f': self.J, 'x': ca.vertcat(*self.w), 'g': ca.vertcat(*self.g)}
-        solver = ca.nlpsol('solver', 'ipopt', prob, self.ipopt_opts)
+        self.nlp_solver = ca.nlpsol('solver', 'ipopt', prob, self.ipopt_opts)
 
         # Solve the NLP
-        sol = solver(x0=np.concatenate(self.w0), lbx=np.concatenate(self.lbw), ubx=np.concatenate(self.ubw),
-                     lbg=np.concatenate(self.lbg), ubg=np.concatenate(self.ubg))
+        sol = self.nlp_solver(x0=np.concatenate(self.w0), lbx=np.concatenate(self.lbw), ubx=np.concatenate(self.ubw),
+                              lbg=np.concatenate(self.lbg), ubg=np.concatenate(self.ubg))
         u_opt_N = np.reshape(sol['x'], (self.ocp.u_dim,self.N))
         self.u_opt = interp1d(self.tgrid_N[0:-1], u_opt_N, bounds_error=False, fill_value=u_opt_N[:,-1], kind='zero')(self.tgrid_sim[0:-1])
 
         self.get_trajectory()
-        self.plot_trajectory(True)
+        if plot: self.plot_trajectory()
 
 
 class ocp_dmsm_solver(ocp_d_solver):
@@ -471,7 +523,7 @@ class ocp_dmsm_solver(ocp_d_solver):
         super(ocp_dmsm_solver, self).__init__(ocp)
 
 
-    def solve(self, h_sim, N, u_ig=None, x_ig=None):
+    def solve(self, h_sim, N, u_ig=None, x_ig=None, plot=False):
         self.initialize(h_sim, N, None, u_ig, x_ig, None)
         self.initialize_ca()
 
@@ -513,11 +565,11 @@ class ocp_dmsm_solver(ocp_d_solver):
 
         # Create an NLP solver
         prob = {'f': self.J, 'x': ca.vertcat(*self.w), 'g': ca.vertcat(*self.g)}
-        solver = ca.nlpsol('solver', 'ipopt', prob, self.ipopt_opts)
+        self.nlp_solver = ca.nlpsol('solver', 'ipopt', prob, self.ipopt_opts)
 
         # Solve the NLP
-        sol = solver(x0=np.concatenate(self.w0), lbx=np.concatenate(self.lbw), ubx=np.concatenate(self.ubw),
-                     lbg=np.concatenate(self.lbg), ubg=np.concatenate(self.ubg))
+        sol = self.nlp_solver(x0=np.concatenate(self.w0), lbx=np.concatenate(self.lbw), ubx=np.concatenate(self.ubw),
+                              lbg=np.concatenate(self.lbg), ubg=np.concatenate(self.ubg))
         w_opt = sol['x'].full().flatten()
         u_opt_N = np.zeros((0,self.N))
         for i in range(self.ocp.u_dim):
@@ -527,7 +579,7 @@ class ocp_dmsm_solver(ocp_d_solver):
         self.u_opt = interp1d(self.tgrid_N[0:-1], u_opt_N, bounds_error=False, fill_value=u_opt_N[:,-1], kind='zero')(self.tgrid_sim[0:-1])
 
         self.get_trajectory()
-        self.plot_trajectory(True)
+        if plot: self.plot_trajectory()
 
 
 
@@ -538,9 +590,11 @@ class ocp_dcm_solver(ocp_d_solver):
         super(ocp_dcm_solver, self).__init__(ocp)
 
 
-    def solve(self, h_sim, N, M, u_polynomial, u_continuous=False, u_ig=None, x_ig=None):
+    def solve(self, h_sim, N, M, u_polynomial=False, u_continuous=False, u_ig=None, x_ig=None, plot=False):
         self.initialize(h_sim, N, M, u_ig, x_ig, None)
         self.initialize_ca()
+
+        if u_polynomial: self.u_type = 'default'
 
         # direct collocation method
 
@@ -692,11 +746,11 @@ class ocp_dcm_solver(ocp_d_solver):
 
         # Create an NLP solver
         prob = {'f': self.J, 'x': self.w, 'g': self.g}
-        solver = ca.nlpsol('solver', 'ipopt', prob, self.ipopt_opts)
+        self.nlp_solver = ca.nlpsol('solver', 'ipopt', prob, self.ipopt_opts)
 
         # Solve the NLP
-        sol = solver(x0=np.concatenate(self.w0), lbx=np.concatenate(self.lbw), ubx=np.concatenate(self.ubw),
-                     lbg=np.concatenate(self.lbg), ubg=np.concatenate(self.ubg))
+        sol = self.nlp_solver(x0=np.concatenate(self.w0), lbx=np.concatenate(self.lbw), ubx=np.concatenate(self.ubw),
+                              lbg=np.concatenate(self.lbg), ubg=np.concatenate(self.ubg))
         w_opt = sol['x'].full().flatten()
         self.w_opt = w_opt
 
@@ -716,58 +770,69 @@ class ocp_dcm_solver(ocp_d_solver):
                 self.u_opt = np.append(self.u_opt, [u_t_i_fcn(element) for element in self.tgrid_sim[int(i*round(self.h_N/self.h_sim)):int((i+1)*round(self.h_N/self.h_sim))]])
             self.u_opt = np.reshape(self.u_opt, (self.ocp.u_dim,len(self.tgrid_sim)-1))
 
-            self.get_trajectory()
-            self.plot_trajectory()
-
         else:
             u_opt_N = np.zeros((self.ocp.u_dim,0))
             for i in range(self.N):
                 u_opt_N = np.append(u_opt_N, np.reshape(w_opt[(self.M+1)*self.ocp.x_dim*i + self.ocp.u_dim*i:(self.M+1)*self.ocp.x_dim*i + self.ocp.u_dim*(i+1)], (self.ocp.u_dim,1)), axis=1)
             u_opt_N = np.reshape(u_opt_N, (self.ocp.u_dim,self.N))
+            self.u_opt_N = u_opt_N
 
             self.u_opt = interp1d(self.tgrid_N[0:-1], u_opt_N, bounds_error=False, fill_value=u_opt_N[:,-1], kind='zero')(self.tgrid_sim[0:-1])
 
-            self.get_trajectory()
-            self.plot_trajectory(True)
+        self.get_trajectory()
+        if plot: self.plot_trajectory()
 
 
 
 if __name__ is '__main__':
 
 
-    problem_names = {'1': 'double_int', '2': 'simple_pend', '3': 'simple_pend_cart_pl', '4': 'simple_pend_cart',
-                     '5': 'pend_cart_pl', '6': 'pend_cart', '7': 'simple_dual_pend_cart_pl', '8': 'simple_dual_pend_cart',
-                     '9': 'dual_pend_cart_pl', '10': 'dual_pend_cart', '11': 'vtol', '12': 'ua_manipulator_pl', '13': 'acrobot_pl',
-                     '14': 'double_pend_cart_pl', '15': 'triple_pend_cart_pl'}
+    problem_names = {'1': 'double_int', '2': 'pend', '3': 'pend_cart_pl', '4': 'pend_cart',
+                     '5': 'dual_pend_cart_pl', '6': 'dual_pend_cart',
+                     '7': 'vtol', '8': 'ua_manipulator_pl', '9': 'acrobot_pl',
+                     '10': 'double_pend_cart_pl', '11': 'triple_pend_cart_pl'}
 
-    problem = problem_names['1']
-    ocp1 = ocp(problem)
+
+    ocp1 = ocp(problem_names['11'])
+#    ocp1 = ocp(problem_names['5'], False)
+#    ocp1 = ocp(problem_names['5'], False, 1.5)
 
     h_sim = 0.001
-    N = 100
+    N = 400
     M = 4
 
     tgrid_sim = np.linspace(ocp1.t_0, ocp1.t_f, round((ocp1.t_f - ocp1.t_0)/h_sim)+1)
     tgrid_N = np.linspace(ocp1.t_0, ocp1.t_f, N+1)
+    tgrid_NM = np.linspace(ocp1.t_0, ocp1.t_f, N*(M+1))
 
 #    dssm_solver = ocp_dssm_solver(ocp1)
-#    dssm_solver.solve(h_sim, N)
+#    dssm_solver.solve(h_sim, N, None, True)
 
 #    dmsm_solver = ocp_dmsm_solver(ocp1)
-#    dmsm_solver.solve(h_sim, N)
+#    dmsm_solver.solve(h_sim, N, None, None, True)
 
     dcm_solver = ocp_dcm_solver(ocp1)
-    dcm_solver.solve(h_sim, N, M, False, False)
+    dcm_solver.solve(h_sim, N, M, False, False, None, None, True)
+#    dcm_solver.solve(h_sim, N, M, True, True, None, None, True)
 
-#    issm_solver = ocp_issm_solver(ocp1)
-#    issm_solver.solve(h_sim)
 
-#    imsm_solver = ocp_imsm_solver(ocp1)
 #    x_opt = dcm_solver.x_opt
+#    x_ig = interp1d(tgrid_sim, x_opt, kind='zero')(tgrid_NM)
 #    x_ig = interp1d(tgrid_sim, x_opt, kind='zero')(tgrid_N)
 #    y_ig = np.zeros(x_ig.shape)
+#    u_opt = dcm_solver.u_opt
+#    u_ig = interp1d(tgrid_sim[0:-1], u_opt, kind='zero')(tgrid_N[0:-1])
+
+#    dcm_solver = ocp_dcm_solver(ocp1)
+#    dcm_solver.solve(h_sim, N, M, False, False, u_ig, x_ig, True)
+
+
+#    issm_solver = ocp_issm_solver(ocp1)
+#    issm_solver.solve(h_sim, None, True)
+
+#    imsm_solver = ocp_imsm_solver(ocp1)
 #    imsm_solver.solve(h_sim, N, x_ig, y_ig)
-#    imsm_solver.solve(h_sim, N)
+#    imsm_solver.solve(h_sim, N, None, None, True)
 
 #    icm_solver = ocp_icm_solver(ocp1)
-#    icm_solver.solve(h_sim, N, M)
+#    icm_solver.solve(h_sim, N, M, None, None, True)

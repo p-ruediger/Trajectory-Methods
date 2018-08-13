@@ -24,7 +24,7 @@ tthetad = st.time_deriv(ttheta, ttheta)
 tthetadd = st.time_deriv(ttheta, ttheta, order=2)
 st.make_global(ttheta, tthetad, tthetadd)
 
-params = sp.symbols('l1, l2, s1, s2, m1, m2, J1, J2, m0, g')
+params = sp.symbols('l1, l2, s1, s2, m1, m2, m0, g')
 st.make_global(params)
 
 tau1 = sp.Symbol("tau1")
@@ -46,12 +46,12 @@ S2 = G1 + mt.Rz(p2)*ey*s2
 Sd0, Sd1, Sd2 = st.col_split(st.time_deriv(st.col_stack(S0, S1, S2), ttheta))
 
 # Energie
-T_rot = (J1*pdot1**2)/2 + (J2*pdot2**2)/2
+T_rot = 0
 T_trans = (m0*Sd0.T*Sd0 + m1*Sd1.T*Sd1 + m2*Sd2.T*Sd2)/2
 
 T = T_rot + T_trans[0]
 
-V = m1*g*S1[1]
+V = m1*g*S1[1] + m2*g*S2[1]
 
 mod = mt.generate_symbolic_model(T, V, ttheta, [0, 0, tau1])
 
