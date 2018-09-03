@@ -3,7 +3,7 @@ Student project/thesis: Comparison of trajectory planning methods for dynamical 
 
 Implementation of direct and indirect shooting and collocation methods for trajectory optimization with [CasADi](https://web.casadi.org/) using [CVODES](https://computation.llnl.gov/projects/sundials/cvodes) and [IPOPT](https://projects.coin-or.org/Ipopt)
 
-## [Implemented methods](ocp_solver.py)
+## [Implemented Methods](ocp_solver.py)
 - direct single shooting method (dssm) with piecewise constant input signal parametrization (N subintervals)
 - direct multiple shooting method (dmsm) with piecewise constant input signal parametrization (N subintervals)
 - direct (orthogonal) collocation method (dcm) with piecewise constant input signal parametrization (N subintervals with M collocation points)
