@@ -89,14 +89,12 @@ class plot(object):
             for j in range(len(self.subplots[i]['yarrays'])):
                 plt.plot(self.xarray, self.subplots[i]['yarrays'][j], label=self.subplots[i]['labels'][j], color=self.subplots[i]['colors'][j],
                          linestyle=self.subplots[i]['linestyles'][j], drawstyle=self.subplots[i]['drawstyles'][j], linewidth=self.subplots[i]['linewidths'][j])
-            if self.subplots[i]['labels'][j] is not None: plt.legend(loc=0)
+            if self.subplots[i]['labels'][j] != None: plt.legend(loc=0)
             plt.ylabel(self.subplots[i]['ylabel'], rotation=0, labelpad=ylpad)
             plt.margins(x=0.02)
 #            plt.margins(tight=True)
-            if ymins is not None:
-                plt.ylim(ymin=ymins[i])
-            if ymaxs is not None:
-                plt.ylim(ymax=ymaxs[i])
+            if ymins != None: plt.ylim(ymin=ymins[i])
+            if ymaxs != None: plt.ylim(ymax=ymaxs[i])
             plt.grid(True)
             plt.setp(axs[i].get_xticklabels(), visible=(i==len(self.subplots)-1))
 

@@ -3,6 +3,11 @@
 Created on Mon May 14 12:35:31 2018
 
 @author: Patrick Rüdiger
+
+Student project/thesis: Verfahrensvergleich zur Trajektorienplanung für dynamische Systeme (comparison of trajectory planning methods for dynamical systems)
+
+Implementation of direct and indirect shooting and collocation methods for trajectory optimization with CasADi using CVODES and IPOPT
+
 '''
 
 #     Partially based on CasADi examples.
@@ -28,15 +33,13 @@ Created on Mon May 14 12:35:31 2018
 
 import numpy as np
 import sympy as sp
-import symbtools as st
 import casadi as ca
 import matplotlib.pyplot as plt
 from scipy.interpolate import interp1d
-#import time
 from ocp import ocp
 
 
-
+# needed to convert SymPy expression to CasADi expression
 ca_replacements = {'sin': 'ca.sin',
                    'cos': 'ca.cos',
                    'tan': 'ca.tan',
@@ -56,34 +59,40 @@ def str_replace_all(string, replacements):
 
 
 
-class ocp_solver(object):
+class ocp_solver(object): # general optimal control problem (ocp) solver class
 
 
     def __init__(self, ocp):
-        self.h_sim = None
-        self.tgrid_sim = None
-        self.u_opt = None
-        self.x_opt = None
-        self.nlp_solver = None
-        self.stats = {'success': None, 'iters': None, 'time': None, 'time_per_iter': None, 'x_f_dev': None, 'J': None}
+        self.h_sim = None       # simulation: step size
+        self.tgrid_sim = None   # simulation: time grid
+        self.u_opt = None       # optimal input trajectory
+        self.x_opt = None       # optimal state trajectory
+        self.nlp_solver = None  # CasADi solver object
+        # performance statistics
+        self.stats = {'success': None,          # IPOPT: local optimum found
+                      'iters': None,            # IPOPT: number of iterations
+                      'time': None,             # IPOPT: elapsed real time (wall time)
+                      'time_per_iter': None,    # IPOPT: elapsed real time per iteration (mean)
+                      'x_f_dev': None,          # deviation of final state (Euclidean norm)
+                      'J': None}                # total cost
 
-        self.ocp = ocp
+        self.ocp = ocp          # ocp to be solved
 
-        self.x = ca.MX.sym('x', self.ocp.x_dim)
-        self.u = ca.MX.sym('u', self.ocp.u_dim)
-
-
-    def initialize(self, h_sim, N, M, u_ig, x_ig, y_ig):
-        self.int_tol = 1e-12
-        self.h_sim = h_sim
-        if u_ig is not None: self.u_ig = u_ig
-        if x_ig is not None: self.x_ig = x_ig
-        if y_ig is not None: self.y_ig = y_ig
-        if N is not None: self.N = N
-        if M is not None: self.M = M
+        self.x = ca.MX.sym('x', self.ocp.x_dim) # CasADi symbols for state
+        self.u = ca.MX.sym('u', self.ocp.u_dim) # CasADi symbols for input
 
 
-    def plot_trajectory(self):
+    def initialize(self, h_sim, N, M, u_ig, x_ig, y_ig):    # initialize method parameters
+        self.int_tol = 1e-12                # simulation: tolerance of relative and absolute local discretization error of ode solver
+        self.h_sim = h_sim                  # simulation: step size
+        if u_ig != None: self.u_ig = u_ig   # initial guess for optimal input trajectory
+        if x_ig != None: self.x_ig = x_ig   # initial guess for optimal state trajectory
+        if y_ig != None: self.y_ig = y_ig   # initial guess for optimal co-state trajectory (indirect methods)
+        if N != None: self.N = N            # number of (time) subintervals
+        if M != None: self.M = M            # order of collocation method
+
+
+    def plot_trajectory(self): # plots trajectory and shows performance statistics for testing purposes
         plt.rcParams.update(plt.rcParamsDefault)
         plt.figure(1)
         legend = []
@@ -102,12 +111,11 @@ class ocp_solver(object):
 
 
 
-class ocp_i_solver(ocp_solver):
+class ocp_i_solver(ocp_solver): # general class for indirect ocp solvers
 
 
     def __init__(self, ocp):
         self.y = None
-        self.u_opt = None
         self.z = None
         self.z_dot = None
         self.u_opt_fcn = None
@@ -116,61 +124,69 @@ class ocp_i_solver(ocp_solver):
         self.nlpsol_opts = None
         self.z_opt = None
 
-        self.u_type = 'default'
+        self.u_type = 'default'     # continuous input trajectory
 
         super(ocp_i_solver, self).__init__(ocp)
 
-        if not self.ocp.has_objective: print('Error: No objective')
+        if not self.ocp.has_objective: print('Error: No objective') # indirect methods require objective (cost functional)
         assert self.ocp.has_objective
-        self.ocp.setup_optbvp()
+        self.ocp.indirect_method() # determines ode and input parametrization based on necessary optimality conditions for indirect methods
 
 
-    def initialize_ca(self):
-        # Time grid for simulation
+    def initialize_ca(self): # initialize CasADi expressions and objects
+        # set simulation time grid for ocp to be solved
         self.tgrid_sim = np.linspace(self.ocp.t_0, self.ocp.t_f, round((self.ocp.t_f - self.ocp.t_0)/self.h_sim)+1)
 
+        # convert SymPy expression of state space model to CasADi expression
         self.x_dot = []
         for element in self.ocp.x_dot:
             element_str_replaced = str_replace_all(str(element), ca_replacements)
             self.x_dot.append(eval(element_str_replaced))
         self.x_dot = ca.vertcat(*self.x_dot)
 
+        # convert SymPy expression of integral cost to CasADi expression
         self.L = []
         for element in self.ocp.L:
             element_str_replaced = str_replace_all(str(element), ca_replacements)
             self.L.append(eval(element_str_replaced))
         self.L = ca.vertcat(*self.L)
 
-        self.y = ca.MX.sym('y', self.ocp.x_dim)
+        self.y = ca.MX.sym('y', self.ocp.x_dim) # CasADi symbols for co-state
 
+        # convert SymPy expression of optimal input parametrization based on necessary optimality conditions to CasADi expression
         self.u_opt = []
         for element in self.ocp.u_noc:
             element_str_replaced = str_replace_all(str(element), ca_replacements)
             self.u_opt.append(eval(element_str_replaced))
         self.u_opt = ca.vertcat(*self.u_opt)
 
+        # consider input constraints
         if np.any(self.ocp.u_min > -np.inf*np.ones(self.ocp.u_dim)):
             self.u_opt = ca.fmax(self.u_opt, self.ocp.u_min)
         if np.any(self.ocp.u_max < np.inf*np.ones(self.ocp.u_dim)):
             self.u_opt = ca.fmin(self.u_opt, self.ocp.u_max)
 
-        self.z = ca.vertcat(self.x, self.y)
+        self.z = ca.vertcat(self.x, self.y) # collect CasADi symbols for state and co-state
 
+        # convert SymPy expression of ode based on necessary optimality conditions to CasADi expression
         self.z_dot = []
         for element in self.ocp.z_dot:
             element_str_replaced = str_replace_all(str(element), ca_replacements)
             self.z_dot.append(eval(element_str_replaced))
         self.z_dot = ca.vertcat(*self.z_dot)
 
+        # CasADi function of optimal input parametrization based on necessary optimality
         self.u_opt_fcn = ca.Function('u_opt_fcn', [self.z], [self.u_opt])
 
-        self.ode = {'x': self.z, 'ode': self.z_dot}
-        self.ode2 = {'x': self.x, 'p': self.u, 'ode': self.x_dot, 'quad': self.L}
-
-        # Simulator to get optimal state and control trajectories
+        # CasADi integrator objects to solve initial value problems using CVODES
+        self.ode = {'x': self.z, 'ode': self.z_dot}                                 # ode based on necessary optimality conditions
+        self.ode2 = {'x': self.x, 'p': self.u, 'ode': self.x_dot, 'quad': self.L}   # state space model and cost function
+        # integrator object for simulation
         self.simulator = ca.integrator('simulator', 'cvodes', self.ode, {'grid': self.tgrid_sim, 'output_t0': True, 'abstol': self.int_tol, 'reltol': self.int_tol})
+        # integrator object to calculate total cost
         self.quad = ca.integrator('quad', 'cvodes', self.ode2, {'tf': self.h_sim, 'abstol': self.int_tol, 'reltol': self.int_tol})
 
+        # options for nonlinear program (nlp) solver IPOPT
         self.nlpsol_opts = {'nlpsol': 'ipopt',
                             'nlpsol_options': {'ipopt.max_iter': 1e3, 'ipopt.tol': 1e-6, 'ipopt.constr_viol_tol': 1e-4, 'ipopt.compl_inf_tol': 1e-4, 'ipopt.dual_inf_tol': 1,
                                                'ipopt.acceptable_tol': 1e-6, 'ipopt.acceptable_constr_viol_tol': 1e-4, 'ipopt.acceptable_compl_inf_tol': 1e-4,
@@ -178,6 +194,7 @@ class ocp_i_solver(ocp_solver):
 
 
     def get_trajectory(self):
+        # determine optimal input and state trajectory using the solution of the ode based on necessary optimality conditions
         u_fcn = self.u_opt_fcn.map(len(self.tgrid_sim))
         self.u_opt = u_fcn(self.z_opt)[0:-1].full()
         self.x_opt = np.zeros((0,len(self.tgrid_sim)))
@@ -185,22 +202,22 @@ class ocp_i_solver(ocp_solver):
             self.x_opt = np.append(self.x_opt, self.z_opt[i,:])
         self.x_opt = np.reshape(self.x_opt, (self.ocp.x_dim,len(self.tgrid_sim)))
 
-        stats = self.nlp_solver.stats()
-        self.stats['success'] = stats['nlpsol']['success']
-        self.stats['time'] = stats['nlpsol']['t_wall_nlpsol']
-        self.stats['iters'] = stats['nlpsol']['iter_count']
-
-        self.stats['time_per_iter'] = self.stats['time']/self.stats['iters']
-        self.stats['x_f_dev'] = np.linalg.norm(self.x_opt[:,-1] - self.ocp.x_f)
-
+        # collect solution statistics
+        stats = self.nlp_solver.stats()                                             # get IPOPT stats
+        self.stats['success'] = stats['nlpsol']['success']                          # IPOPT: local optimum found
+        self.stats['time'] = stats['nlpsol']['t_wall_nlpsol']                       # IPOPT: elapsed real time (wall time)
+        self.stats['iters'] = stats['nlpsol']['iter_count']                         # IPOPT: number of iterations
+        self.stats['time_per_iter'] = self.stats['time']/self.stats['iters']        # IPOPT: elapsed real time per iteration (mean)
+        self.stats['x_f_dev'] = np.linalg.norm(self.x_opt[:,-1] - self.ocp.x_f)     # deviation of final state (Euclidean norm)
+        # calculate total cost
         J = 0
         for i in range(len(self.tgrid_sim)-1):
             J += self.quad(x0=self.x_opt[:,i], p=self.u_opt[:,i])['qf'].full()[0][0]
-        self.stats['J'] = J
+        self.stats['J'] = J                                                         # total cost
 
 
 
-class ocp_issm_solver(ocp_i_solver):
+class ocp_issm_solver(ocp_i_solver): # solver class for indirect single shooting method
 
 
     def __init__(self, ocp):
@@ -211,38 +228,29 @@ class ocp_issm_solver(ocp_i_solver):
         self.initialize(h_sim, None, None, None, None, y_ig)
         self.initialize_ca()
 
-        # indirect single shooting method
-
-        # Create an integrator (CVodes)
+        # formulate root-finding problem with the single shooting method, i.e. (consecutive) solution of an initial value problem (ivp) via CasADi integrator object
         I = ca.integrator('I', 'cvodes', self.ode, {'t0': self.ocp.t_0, 'tf': self.ocp.t_f, 'abstol': self.int_tol, 'reltol': self.int_tol})
+        y_0 = ca.MX.sym('y_0', self.ocp.x_dim)      # problem variables: intial co-state
+        z_0 = ca.vertcat(self.ocp.x_0, y_0)         # collect initial state and co-state
+        Z = I(x0=z_0)['xf']                         # implicit expression of the ivp solution via CasADi integrator object
+        x_f = Z[0:self.ocp.x_dim] - self.ocp.x_f    # root-finding problem (nonlinear equation) to be solved (condition for final state)
+        rfp = ca.Function('rfp', [y_0], [x_f])      # root-finding problem as CasADi function
 
-        y_0 = ca.MX.sym('y_0', self.ocp.x_dim)
-        z_0 = ca.vertcat(self.ocp.x_0, y_0)
-
-        Z = I(x0=z_0)['xf']
-        x_f = Z[0:self.ocp.x_dim] - self.ocp.x_f
-
-        # Formulate root-finding problem
-        rfp = ca.Function('rfp', [y_0], [x_f])
-
-        # Allocate an implict solver
-        self.nlp_solver = ca.rootfinder('solver', 'nlpsol', rfp, self.nlpsol_opts)
-
-        # Solve the problem
-        if y_ig is None:
+        # solve the root-finding problem
+        self.nlp_solver = ca.rootfinder('solver', 'nlpsol', rfp, self.nlpsol_opts)  # construct rootfinder object using IPOPT as solver
+        if y_ig == None:                                                            # initialize problem variables with zeros or consider initial guess
             y_0_opt = np.array(self.nlp_solver(0).nonzeros())
         else:
             y_0_opt = np.array(self.nlp_solver(y_ig).nonzeros())
 
-        # Simulate to get the state trajectory
+        # get the complete state and input trajectory via simulation
         self.z_opt = self.simulator(x0=np.concatenate((self.ocp.x_0, y_0_opt)))['xf']
-
         self.get_trajectory()
         if plot: self.plot_trajectory()
 
 
 
-class ocp_imsm_solver(ocp_i_solver):
+class ocp_imsm_solver(ocp_i_solver): # solver class for indirect multiple shooting method
 
 
     def __init__(self, ocp):
@@ -253,50 +261,41 @@ class ocp_imsm_solver(ocp_i_solver):
         self.initialize(h_sim, N, None, None, x_ig, y_ig)
         self.initialize_ca()
 
-        # indirect multiple shooting method
-
-        # Create an integrator (CVodes)
+        # formulate root-finding problem with the multiple shooting method, i.e. (consecutive) solution of initial value problems (ivp) via CasADi integrator object
         I = ca.integrator('I', 'cvodes', self.ode, {'t0': self.ocp.t_0, 'tf': self.ocp.t_f/self.N, 'abstol': self.int_tol, 'reltol': self.int_tol})
-
-        # Variables in the root finding problem
-        V = ca.MX.sym('V', (self.N+1)*2*self.ocp.x_dim)
-
+        V = ca.MX.sym('V', (self.N+1)*2*self.ocp.x_dim) # problem variables: state and co-state at the beginning of the N subintervals and at the final time
+        # collect the problem variables
         Z = []
         for i in range(self.N+1):
             Z.append(V[i*2*self.ocp.x_dim:(i+1)*2*self.ocp.x_dim])
-
-        # Formulate the root finding problem
+        # collect the N+1 nonlinear equations of the root-finding problem
         G = []
-        G.append(Z[0][0:self.ocp.x_dim] - self.ocp.x_0)
+        G.append(Z[0][0:self.ocp.x_dim] - self.ocp.x_0)         # condition for initial state
         for k in range(self.N):
-            Z_end = I(x0=Z[k])['xf']
-            G.append(Z_end - Z[k+1])
-        G.append(Z[self.N][0:self.ocp.x_dim] - self.ocp.x_f)
+            Z_end = I(x0=Z[k])['xf']                            # implicit expression of the ivp solution via CasADi integrator object
+            G.append(Z_end - Z[k+1])                            # continuity condition
+        G.append(Z[self.N][0:self.ocp.x_dim] - self.ocp.x_f)    # condition for final state
+        rfp = ca.Function('rfp', [V], [ca.vertcat(*G)])         # root-finding problem as CasADi function
 
-        rfp = ca.Function('rfp', [V], [ca.vertcat(*G)])
-
-        # Allocate a solver
-        self.nlp_solver = ca.rootfinder('solver', 'nlpsol', rfp, self.nlpsol_opts)
-
-        # Solve the problem
-        if np.any(x_ig == None) or np.any(y_ig == None):
+        # solve the root-finding problem
+        self.nlp_solver = ca.rootfinder('solver', 'nlpsol', rfp, self.nlpsol_opts)  # construct rootfinder object using IPOPT as solver
+        if np.any(x_ig == None) or np.any(y_ig == None):                            # initialize problem variables with zeros or consider initial guess
             z_opt = self.nlp_solver(0)
         else:
             z_opt = self.nlp_solver(np.ravel(np.concatenate([x_ig, y_ig]), 'F'))
 
-        # Simulate to get the trajectories
+        # get the complete state and input trajectory via simulation
         self.z_opt = self.simulator(x0=z_opt[0:2*self.ocp.x_dim])['xf']
-
         self.get_trajectory()
         if plot: self.plot_trajectory()
 
 
 
-class ocp_icm_solver(ocp_i_solver):
+class ocp_icm_solver(ocp_i_solver): # solver class for indirect (orthogonal) collocation method
 
 
     def __init__(self, ocp):
-        self.h_N = None
+        self.h_N = None     # (time) discretization step size
 
         super(ocp_icm_solver, self).__init__(ocp)
 
@@ -304,144 +303,127 @@ class ocp_icm_solver(ocp_i_solver):
     def solve(self, h_sim, N, M, x_ig=None, y_ig=None, plot=False):
         self.initialize(h_sim, N, M, None, x_ig, y_ig)
         self.initialize_ca()
-        self.h_N = (self.ocp.t_f - self.ocp.t_0)/self.N
+        self.h_N = (self.ocp.t_f - self.ocp.t_0)/self.N                 # set discretization step size for ocp to be solved and N subintervals
+        z_dot_fcn = ca.Function('z_dot_fcn', [self.z], [self.z_dot])    # ode based on necessary optimality conditions as CasADi function
 
-        # indirect collocation method
-
-        z_dot_fcn = ca.Function('z_dot_fcn', [self.z], [self.z_dot])
-
-        cp = np.array(ca.collocation_points(self.M, 'legendre'))
-        c = np.array(np.append(0, cp)) # 'radau' or 'legendre'
-
-        # Coefficients of the collocation equation
-        a = np.zeros((self.M+1,self.M+1))
-
-        # Coefficients of the continuity equation
-        b = np.zeros(self.M+1)
-
-        # Construct polynomial basis
+        # setup collocation method using one interpolation polynomial (sum of M+1 Lagrange polynomials) on the interval [0,1]
+        cp = np.array(ca.collocation_points(self.M, 'legendre'))    # M collocation points (roots of the shifted Legendre polynomial of degree M)
+        c = np.array(np.append(0, cp))                              # M+1 interpolation points
+        a = np.zeros((self.M+1,self.M+1))                           # derivatives of the M+1 Lagrange polynomials at each interpolation point (needed for collocation equations)
+        b = np.zeros(self.M+1)                                      # values of the M+1 Lagrange polynomials at the end of the interval (needed for the continuity equation)
+        # determine coefficients (a, b) by constructing M+1 Lagrange polynomials, i.e. one interpolation polynomial
         for j in range(self.M+1):
-            # Construct Lagrange polynomials to get the polynomial basis at the collocation point
+            # construct the Lagrange polynomial
             p = np.poly1d([1])
             for k in range(self.M+1):
                 if k != j:
                     p *= np.poly1d([1, -c[k]]) / (c[j] - c[k])
-
-            # Evaluate the polynomial at the final time to get the coefficients of the continuity equation
+            # evaluate the Lagrange polynomial at the end of the interval
             b[j] = p(1.0)
-
-            # Evaluate the time derivative of the polynomial at all collocation points to get the coefficients of the continuity equation
+            # evaluate the derivative of the Lagrange polynomial at all collocation points
             p_dot = np.polyder(p)
             for r in range(self.M+1):
                 a[j,r] = p_dot(c[r])
 
-        # Variables in the root finding problem
-        V = ca.MX.sym('V', (self.N*(self.M+1)+1)*2*self.ocp.x_dim)
-
+        # formulate root-finding problem with the collocation method
+        V = ca.MX.sym('V', (self.N*(self.M+1)+1)*2*self.ocp.x_dim)  # problem variables: state and co-state at the M+1 interpolation points of the N subintervals and at the final time
+        # collect the problem variables
         Z = []
         for i in range(self.N*(self.M+1)+1):
             Z.append(V[i*2*self.ocp.x_dim:(i+1)*2*self.ocp.x_dim])
-
-        # Formulate the root finding problem
+        # collect the (M+1)N+1 nonlinear equations of the root-finding problem, i.e. collocation and continuity equations for all N subintervals
+        # this equates to evaluating interpolation polynomial respectively their derivatives at the interpolations points using the previously determined coefficients (a, b)
         G = []
-        G.append(Z[0][0:self.ocp.x_dim] - self.ocp.x_0)
-        for k in range(self.N):
-            # Loop over collocation points
-            Zk_end = b[0]*Z[k*(self.M+1)]
-            for j in range(1,self.M+1):
-               # Expression for the state derivative at the collocation point
-               zp = a[0,j]*Z[k*(self.M+1)]
-               for r in range(self.M):
-                   zp += a[r+1,j]*Z[k*(self.M+1)+r+1]
+        G.append(Z[0][0:self.ocp.x_dim] - self.ocp.x_0)                     # condition for initial state
+        for k in range(self.N):                                             # loop over subintervals
+            Zk_end = b[0]*Z[k*(self.M+1)]                                   # sum over interpolation points to get the states at the end of the subinterval
+            for j in range(1,self.M+1):                                     # loop over collocation points to setup collocation equations
+                zp = a[0,j]*Z[k*(self.M+1)]/self.h_N                        # sum over interpolation points to get the state derivatives at the collocation point
+                for r in range(self.M):                                     # "
+                   zp += a[r+1,j]*Z[k*(self.M+1)+r+1]/self.h_N              # "
+                z_dot_j = z_dot_fcn(Z[k*(self.M+1)+j])                      # state derivative at the collocation point as demanded by the ode based on optimality conditions
+                G.append(z_dot_j - zp)                                      # add collocation equation to the root-finding problem
+                Zk_end += b[j]*Z[k*(self.M+1)+j]                            # sum over interpolation points to get the states at the end of the subinterval
+            G.append(Zk_end - Z[(k+1)*(self.M+1)])                          # add continuity equation to the root-finding problem
+        G.append(Z[self.N*(self.M+1)][0:self.ocp.x_dim] - self.ocp.x_f)     # condition for final state
+        rfp = ca.Function('rfp', [V], [ca.vertcat(*G)])                     # root-finding problem as CasADi function
 
-               z_dot_j = z_dot_fcn(Z[k*(self.M+1)+j])
-
-               # Append collocation equations
-               G.append(self.h_N*z_dot_j - zp)
-
-               # Add contribution to the end state
-               Zk_end += b[j]*Z[k*(self.M+1)+j]
-
-            G.append(Zk_end - Z[(k+1)*(self.M+1)])
-
-        G.append(Z[self.N*(self.M+1)][0:self.ocp.x_dim] - self.ocp.x_f)
-
-        G = ca.vertcat(*G)
-
-        rfp = ca.Function('rfp', [V], [G])
-
-        # Allocate a solver
-        self.nlp_solver = ca.rootfinder('solver', 'nlpsol', rfp, self.nlpsol_opts)
-
-        # Solve the problem
-        if None in [x_ig, y_ig]:
+        # solve the root-finding problem
+        self.nlp_solver = ca.rootfinder('solver', 'nlpsol', rfp, self.nlpsol_opts)  # construct rootfinder object using IPOPT as solver
+        if None in [x_ig, y_ig]:                                                    # initialize problem variables with zeros or consider initial guess
             z_opt = self.nlp_solver(0)
         else:
             z_opt = self.nlp_solver(np.ravel(np.concatenate([x_ig, y_ig]), 'F'))
 
-        # Simulate to get the trajectories
+        # get the complete state and input trajectory via simulation
         self.z_opt = self.simulator(x0=z_opt[0:2*self.ocp.x_dim])['xf']
-
         self.get_trajectory()
         if plot: self.plot_trajectory()
 
 
 
-class ocp_d_solver(ocp_solver):
+class ocp_d_solver(ocp_solver): # general class for direct ocp solvers
 
 
     def __init__(self, ocp):
-        self.h_N = None
-        self.tgrid_N = None
+        self.h_N = None             # (time) discretization step size
+        self.tgrid_N = None         # discretization time grid
 
-        self.u_type = 'steps-post'
+        self.u_type = 'steps-post'  # piecewise constant input trajectory
 
         super(ocp_d_solver, self).__init__(ocp)
 
 
-    def initialize_ca(self):
+    def initialize_ca(self): # initialize CasADi expressions and objects
+        # set discretization step size and time grid for ocp to be solved
         self.h_N = (self.ocp.t_f - self.ocp.t_0)/self.N
         self.tgrid_N = np.linspace(self.ocp.t_0, self.ocp.t_f, self.N+1)
-        if self.h_N > self.h_sim:
+        if self.h_N > self.h_sim:   # ensures that input step does not occur within simulation step
             self.h_sim = self.h_N/round(self.h_N/self.h_sim)
         else:
             self.h_sim = self.h_N
-        # Time grid for simulation
+        # set simulation time grid for ocp to be solved
         self.tgrid_sim = np.linspace(self.ocp.t_0, self.ocp.t_f, round((self.ocp.t_f - self.ocp.t_0)/self.h_sim)+1)
 
+        # convert SymPy expression of state space model to CasADi expression
         self.x_dot = []
         for element in self.ocp.x_dot:
             element_str_replaced = str_replace_all(str(element), ca_replacements)
             self.x_dot.append(eval(element_str_replaced))
         self.x_dot = ca.vertcat(*self.x_dot)
 
+        # convert SymPy expression of integral cost to CasADi expression
         self.L = []
         for element in self.ocp.L:
             element_str_replaced = str_replace_all(str(element), ca_replacements)
             self.L.append(eval(element_str_replaced))
         self.L = ca.vertcat(*self.L)
 
-        # CVODES from the SUNDIALS suite
-        self.ode = {'x': self.x, 'p': self.u, 'ode': self.x_dot, 'quad': self.L}
+        # CasADi integrator objects to solve initial value problems using CVODES
+        self.ode = {'x': self.x, 'p': self.u, 'ode': self.x_dot, 'quad': self.L}    # state space model and cost function
+        # integrator object for shooting methods
         self.I = ca.integrator('I', 'cvodes', self.ode, {'tf': self.h_N, 'abstol': self.int_tol, 'reltol': self.int_tol})
+        # integrator object for simulation
         self.simulator = ca.integrator('simulator', 'cvodes', self.ode, {'tf': self.h_sim, 'abstol': self.int_tol, 'reltol': self.int_tol})
 
-        # Start with an empty NLP
-        self.w = []
-        self.w0 = []
-        self.lbw = []
-        self.ubw = []
-        self.J = 0
-        self.g = []
-        self.lbg = []
-        self.ubg = []
+        # empty nonlinear program (nlp)
+        self.w = []     # vector of problem variables
+        self.w0 = []    # initial guess for vector of problem variables
+        self.lbw = []   # vector of lower bounds of problem variables
+        self.ubw = []   # vector of upper bounds of problem variables
+        self.J = 0      # cost functional
+        self.g = []     # vector of general inequality constraints
+        self.lbg = []   # vector of lower bounds of general inequality constraints
+        self.ubg = []   # vector of upper bounds of general inequality constraints
 
+        # options for nlp solver IPOPT
         self.ipopt_opts = {'ipopt': {'max_iter': 5e3, 'tol': 1e-6, 'constr_viol_tol': 1e-4, 'compl_inf_tol': 1e-4, 'dual_inf_tol': 1,
                                      'acceptable_tol': 1e-6, 'acceptable_constr_viol_tol': 1e-4, 'acceptable_compl_inf_tol': 1e-4,
                                      'acceptable_dual_inf_tol': 1}}
 
 
     def get_trajectory(self):
+        # get state trajectory and total cost via simulation
         self.x_opt = np.reshape(self.ocp.x_0, (self.ocp.x_dim,1))
         J = 0
         for i in range(len(self.tgrid_sim)-1):
@@ -449,20 +431,18 @@ class ocp_d_solver(ocp_solver):
             self.x_opt = np.append(self.x_opt, np.reshape(np.array(sim_i['xf'].full()), (self.ocp.x_dim,1)), axis=1)
             J += sim_i['qf'].full()[0][0]
 
-        self.stats['J'] = J
-
-        stats = self.nlp_solver.stats()
-#        self.stats['J'] = stats['iterations']['obj'][-1]
-        self.stats['success'] = stats['success']
-        self.stats['time'] = stats['t_wall_solver']
-        self.stats['iters'] = stats['iter_count']
-
-        self.stats['time_per_iter'] = self.stats['time']/self.stats['iters']
-        self.stats['x_f_dev'] = np.linalg.norm(self.x_opt[:,-1] - self.ocp.x_f)
+        # collect solution statistics
+        self.stats['J'] = J                                                         # total cost
+        stats = self.nlp_solver.stats()                                             # get IPOPT stats
+        self.stats['success'] = stats['success']                                    # IPOPT: local optimum found
+        self.stats['time'] = stats['t_wall_solver']                                 # IPOPT: elapsed real time (wall time)
+        self.stats['iters'] = stats['iter_count']                                   # IPOPT: number of iterations
+        self.stats['time_per_iter'] = self.stats['time']/self.stats['iters']        # IPOPT: elapsed real time per iteration (mean)
+        self.stats['x_f_dev'] = np.linalg.norm(self.x_opt[:,-1] - self.ocp.x_f)     # deviation of final state (Euclidean norm)
 
 
 
-class ocp_dssm_solver(ocp_d_solver):
+class ocp_dssm_solver(ocp_d_solver): # solver class for direct single shooting method
 
 
     def __init__(self, ocp):
@@ -473,50 +453,50 @@ class ocp_dssm_solver(ocp_d_solver):
         self.initialize(h_sim, N, None, u_ig, None, None)
         self.initialize_ca()
 
-        # direct single shooting method
-
-        # Formulate the NLP
-        Xk = ca.MX(self.ocp.x_0)
+        # formulate nonlinear program (nlp) with the single shooting method, i.e. (consecutive) solution of initial value problems (ivp) via CasADi integrator object
+        Xk = ca.MX(self.ocp.x_0)        # initial state
         for k in range(self.N):
-            # New NLP variable for the control
+            # add current input (constant within current subinterval) to problem variables
             Uk = ca.MX.sym('U_' + str(k), self.ocp.u_dim)
             self.w.append(Uk)
+            # consider input constraints
             self.lbw.append(self.ocp.u_min)
             self.ubw.append(self.ocp.u_max)
-            if u_ig is None:
+            # initialize input with zeros or consider initial guess
+            if u_ig == None:
                 self.w0.append(np.zeros(self.ocp.u_dim))
             else:
                 self.w0.append(self.u_ig[:,k])
-
-            # Integrate till the end of the interval
-            Ik = self.I(x0=Xk, p=Uk)
-            Xk = Ik['xf']
-            self.J += Ik['qf']
-
-            # Add inequality constraint
+            # solve current ivp
+            Ik = self.I(x0=Xk, p=Uk)    # implicit expression of the ivp solution via CasADi integrator object
+            Xk = Ik['xf']               # state at the end of the current subinterval
+            self.J += Ik['qf']          # quadrature state (cost) at the end of the current subinterval
+            # consider conditions for state at the end of the current subinterval
             self.g.append(Xk)
-            if k == self.N-1:
+            if k == self.N-1:           # consider condition for final state
                 self.lbg.append(self.ocp.x_f)
                 self.ubg.append(self.ocp.x_f)
-            else:
+            else:                       # consider state constraints
                 self.lbg.append(self.ocp.x_min)
                 self.ubg.append(self.ocp.x_max)
+        nlp = {'f': self.J, 'x': ca.vertcat(*self.w), 'g': ca.vertcat(*self.g)}     # nlp to be solved
+        self.nlp_solver = ca.nlpsol('solver', 'ipopt', nlp, self.ipopt_opts)        # construct nlp solver object using IPOPT as solver
 
-        # Create an NLP solver
-        prob = {'f': self.J, 'x': ca.vertcat(*self.w), 'g': ca.vertcat(*self.g)}
-        self.nlp_solver = ca.nlpsol('solver', 'ipopt', prob, self.ipopt_opts)
-
-        # Solve the NLP
+        # solve the nlp
         sol = self.nlp_solver(x0=np.concatenate(self.w0), lbx=np.concatenate(self.lbw), ubx=np.concatenate(self.ubw),
                               lbg=np.concatenate(self.lbg), ubg=np.concatenate(self.ubg))
+
+        # get input trajectory from the nlp solution
         u_opt_N = np.reshape(sol['x'], (self.ocp.u_dim,self.N))
+        # adjust input trajectory to simulation time grid
         self.u_opt = interp1d(self.tgrid_N[0:-1], u_opt_N, bounds_error=False, fill_value=u_opt_N[:,-1], kind='zero')(self.tgrid_sim[0:-1])
 
+        # get state trajectory and total cost via simulation
         self.get_trajectory()
         if plot: self.plot_trajectory()
 
 
-class ocp_dmsm_solver(ocp_d_solver):
+class ocp_dmsm_solver(ocp_d_solver): # solver class for direct multiple shooting method
 
 
     def __init__(self, ocp):
@@ -527,264 +507,398 @@ class ocp_dmsm_solver(ocp_d_solver):
         self.initialize(h_sim, N, None, u_ig, x_ig, None)
         self.initialize_ca()
 
-        # direct multiple shooting method
-
-        # Formulate the NLP
-        Xk = ca.MX(self.ocp.x_0)
+        # formulate nonlinear program (nlp) with the multiple shooting method, i.e. (consecutive) solution of an initial value problems (ivp) via CasADi integrator object
+        Xk = ca.MX(self.ocp.x_0)                # initial state
         for k in range(self.N):
-            # New NLP variable for the control
+            # add current input (constant within current subinterval) to problem variables
             Uk = ca.MX.sym('U_' + str(k), self.ocp.u_dim)
             self.w.append(Uk)
+            # consider input constraints
             self.lbw.append(self.ocp.u_min)
             self.ubw.append(self.ocp.u_max)
-            if u_ig is None:
+            # initialize current input with zeros or consider initial guess
+            if u_ig == None:
                 self.w0.append(np.zeros(self.ocp.u_dim))
             else:
                 self.w0.append(self.u_ig[:,k])
-
-            # Integrate till the end of the interval
-            Ik = self.I(x0=Xk, p=Uk)
-            Xk_f = Ik['xf']
-            self.J += Ik['qf']
-
-            # Add inequality constraint
-            if k == self.N-1:
+            # solve current ivp
+            Ik = self.I(x0=Xk, p=Uk)            # implicit expression of the ivp solution via CasADi integrator object
+            Xk_f = Ik['xf']                     # state at the end of the current subinterval
+            self.J += Ik['qf']                  # quadrature state (cost) at the end of the current subinterval
+            # consider conditions for state at the end of the current subinterval
+            if k == self.N-1:                   # consider condition for final state
                 Xk = ca.MX(self.ocp.x_f)
             else:
+                # add state at the end of the current subinterval to problem variables
                 Xk = ca.MX.sym('X_' + str(k+1), self.ocp.x_dim)
                 self.w.append(Xk)
+                # consider state constraints
                 self.lbw.append(self.ocp.x_min)
                 self.ubw.append(self.ocp.x_max)
-                if x_ig is None:
+                # initialize state at the end of the current subinterval with zeros or consider initial guess
+                if x_ig == None:
                     self.w0.append(np.zeros(self.ocp.x_dim))
                 else:
                     self.w0.append(self.x_ig[:,k])
+            # ensure continuity of state
             self.g.append(Xk_f - Xk)
             self.lbg.append(np.zeros(self.ocp.x_dim))
             self.ubg.append(np.zeros(self.ocp.x_dim))
+        nlp = {'f': self.J, 'x': ca.vertcat(*self.w), 'g': ca.vertcat(*self.g)}     # nlp to be solved
+        self.nlp_solver = ca.nlpsol('solver', 'ipopt', nlp, self.ipopt_opts)        # construct nlp solver object using IPOPT as solver
 
-        # Create an NLP solver
-        prob = {'f': self.J, 'x': ca.vertcat(*self.w), 'g': ca.vertcat(*self.g)}
-        self.nlp_solver = ca.nlpsol('solver', 'ipopt', prob, self.ipopt_opts)
-
-        # Solve the NLP
+        # solve the nlp
         sol = self.nlp_solver(x0=np.concatenate(self.w0), lbx=np.concatenate(self.lbw), ubx=np.concatenate(self.ubw),
                               lbg=np.concatenate(self.lbg), ubg=np.concatenate(self.ubg))
+
+        # get input trajectory from the nlp solution
         w_opt = sol['x'].full().flatten()
         u_opt_N = np.zeros((0,self.N))
         for i in range(self.ocp.u_dim):
             u_opt_N = np.append(u_opt_N, w_opt[i::self.ocp.u_dim+self.ocp.x_dim])
         u_opt_N = np.reshape(u_opt_N, (self.ocp.u_dim,self.N))
-
+         # adjust input trajectory to simulation time grid
         self.u_opt = interp1d(self.tgrid_N[0:-1], u_opt_N, bounds_error=False, fill_value=u_opt_N[:,-1], kind='zero')(self.tgrid_sim[0:-1])
 
+        # get state trajectory and total cost via simulation
         self.get_trajectory()
         if plot: self.plot_trajectory()
 
 
 
-class ocp_dcm_solver(ocp_d_solver):
+class ocp_dcm_solver(ocp_d_solver): # solver class for direct (orthogonal) collocation method
 
 
     def __init__(self, ocp):
         super(ocp_dcm_solver, self).__init__(ocp)
 
 
-    def solve(self, h_sim, N, M, u_polynomial=False, u_continuous=False, u_ig=None, x_ig=None, plot=False):
+    def solve(self, h_sim, N, M, u_ig=None, x_ig=None, plot=False):
         self.initialize(h_sim, N, M, u_ig, x_ig, None)
         self.initialize_ca()
+        fq_fcn = ca.Function('f', [self.x, self.u], [self.x_dot, self.L], ['x', 'u'], ['xdot', 'L'])    # state space model and cost functional as CasADi function
 
-        if u_polynomial: self.u_type = 'default'
-
-        # direct collocation method
-
-        # Continuous time dynamics
-        fL_fcn = ca.Function('f', [self.x, self.u], [self.x_dot, self.L], ['x', 'u'], ['xdot', 'L'])
-
-        cp = np.array(ca.collocation_points(self.M, 'legendre'))
-        c = np.array(np.append(0, cp)) # 'radau' or 'legendre'
-
-        # Coefficients of the collocation equation
-        a = np.zeros((self.M+1,self.M+1))
-
-        # Coefficients of the continuity equation
-        b = np.zeros(self.M+1)
-        bu = np.zeros(self.M)
-        bu0 = np.zeros(self.M)
-
-        # Coefficients of the quadrature function
-        d = np.zeros(self.M+1)
-
-        # Construct polynomial basis
+        # setup collocation method using one interpolation polynomial (sum of M+1 Lagrange polynomials) on the interval [0,1]
+        cp = np.array(ca.collocation_points(self.M, 'legendre'))    # M collocation points (roots of the shifted Legendre polynomial of degree M)
+        c = np.array(np.append(0, cp))                              # M+1 interpolation points
+        a = np.zeros((self.M+1,self.M+1))                           # derivatives of the M+1 Lagrange polynomials at each interpolation point (needed for collocation equations)
+        b = np.zeros(self.M+1)                                      # values of the M+1 Lagrange polynomials at the end of the interval (needed for the continuity equation)
+        d = np.zeros(self.M+1)                                      # integrals of M+1 Lagrange polynomials over the interval (needed to calculate the cost)
+        # determine coefficients (a, b, d) by constructing M+1 Lagrange polynomials, i.e. one interpolation polynomial
         for j in range(self.M+1):
-            # Construct Lagrange polynomials to get the polynomial basis at the collocation point
+            # construct the Lagrange polynomial
             p = np.poly1d([1])
             for k in range(self.M+1):
                 if k != j:
                     p *= np.poly1d([1, -c[k]]) / (c[j] - c[k])
-
-            # Evaluate the polynomial at the final time to get the coefficients of the continuity equation
+            # evaluate the Lagrange polynomial at the end of the interval
             b[j] = p(1.0)
-
-            # Evaluate the time derivative of the polynomial at all collocation points to get the coefficients of the continuity equation
+            # evaluate the derivative of the Lagrange polynomial at all collocation points
             p_dot = np.polyder(p)
             for r in range(self.M+1):
                 a[j,r] = p_dot(c[r])
-
-            # Evaluate the integral of the polynomial to get the coefficients of the quadrature function
+            # evaluate the integral of the polynomial over the interval
             p_int = np.polyint(p)
             d[j] = p_int(1.0)
 
-        if u_polynomial:
-            Pu = []
-            for j in range(self.M):
-                pu = np.poly1d([1])
-                for k in range(self.M):
-                    if k != j:
-                        pu *= np.poly1d([1, -cp[k]]) / (cp[j] - cp[k])
-                Pu.append(pu)
-
-                bu[j] = pu(1.0)
-                bu0[j] = pu(0.0)
-
-        # Formulate the NLP
-        Xk = ca.MX(self.ocp.x_0)
-        Uk_end = None
+        # formulate the nlp with the collocation method
+        Xk = ca.MX(self.ocp.x_0)    # initial state
         for k in range(self.N):
-            # State and control at collocation points
-            if u_polynomial:
-                Uc = []
-                for j in range(self.M):
-                    Ukj = ca.MX.sym('U_' + str(k) + '_' + str(j), self.ocp.u_dim)
-                    Uc.append(Ukj)
-                    self.w.append(Ukj)
-                    self.lbw.append(self.ocp.u_min)
-                    self.ubw.append(self.ocp.u_max)
-                    if u_ig is None:
-                        self.w0.append(np.zeros(self.ocp.u_dim))
-                    else:
-                        self.w0.append(self.u_ig[:,k*self.M+j])
+            # add current input (constant within current subinterval) to problem variables
+            Uk = ca.MX.sym('U_' + str(k), self.ocp.u_dim)
+            self.w.append(Uk)
+            # consider input constraints
+            self.lbw.append(self.ocp.u_min)
+            self.ubw.append(self.ocp.u_max)
+            # initialize current input with zeros or consider initial guess
+            if u_ig == None:
+                self.w0.append(np.zeros(self.ocp.u_dim))
             else:
-                Uk = ca.MX.sym('U_' + str(k), self.ocp.u_dim)
-                self.w.append(Uk)
-                self.lbw.append(self.ocp.u_min)
-                self.ubw.append(self.ocp.u_max)
-                if u_ig is None:
-                    self.w0.append(np.zeros(self.ocp.u_dim))
-                else:
-                    self.w0.append(self.u_ig[:,k])
-
+                self.w0.append(self.u_ig[:,k])
+            # state at collocation points
             Xc = []
             for j in range(self.M):
+                # add state at the current collocation point to problem variables
                 Xkj = ca.MX.sym('X_' + str(k) + '_' + str(j), self.ocp.x_dim)
                 Xc.append(Xkj)
                 self.w.append(Xkj)
+                # consider state constraints
                 self.lbw.append(self.ocp.x_min)
                 self.ubw.append(self.ocp.x_max)
-                if x_ig is None:
+                # initialize state at the current collocation point with zeros or consider initial guess
+                if x_ig == None:
                     self.w0.append(np.zeros(self.ocp.x_dim))
                 else:
                     self.w0.append(self.x_ig[:,k*self.M+j+1])
-
-            # Loop over collocation points
+            # loop over collocation points to setup collocation equations
             Xk_end = b[0]*Xk
             for j in range(1,self.M+1):
-               # Expression for the state derivative at the collocation point
-               xp = a[0,j]*Xk
+               # sum over interpolation points to get the state derivatives at the collocation point
+               xp = a[0,j]*Xk/self.h_N
                for r in range(self.M):
-                   xp += a[r+1,j]*Xc[r]
-
-               # Append collocation equations
-               if u_polynomial:
-                   fj, qj = fL_fcn(Xc[j-1], Uc[j-1])
-               else:
-                   fj, qj = fL_fcn(Xc[j-1], Uk)
-               self.g.append(self.h_N*fj - xp)
+                   xp += a[r+1,j]*Xc[r]/self.h_N
+               # add collocation equation to the nlp
+               fj, qj = fq_fcn(Xc[j-1], Uk)
+               self.g.append(fj - xp)
                self.lbg.append(np.zeros(self.ocp.x_dim))
                self.ubg.append(np.zeros(self.ocp.x_dim))
-
-               # Add contribution to the end state
+               # sum over interpolation points to get the states at the end of the subinterval
                Xk_end += b[j]*Xc[j-1]
-
-               # Add contribution to quadrature function
+               # contribution to quadrature state (cost)
                self.J = self.J + d[j]*qj*self.h_N
-
-            # New NLP variable for state at end of interval
-            if k == self.N-1:
+            # state at the end of the current subinterval
+            if k == self.N-1:   # consider condition for final state
                 Xk = ca.MX(self.ocp.x_f)
-
             else:
+                # add state at the end of the current subinterval to problem variables
                 Xk = ca.MX.sym('X_' + str(k+1), self.ocp.x_dim)
                 self.w.append(Xk)
+                # consider state constraints
                 self.lbw.append(self.ocp.x_min)
                 self.ubw.append(self.ocp.x_max)
-                if x_ig is None:
+                # initialize state at the end of the current subinterval with zeros or consider initial guess
+                if x_ig == None:
                     self.w0.append(np.zeros(self.ocp.x_dim))
                 else:
                     self.w0.append(self.x_ig[:,k*(self.M+1)])
-            # Add equality constraint
+            # add continuity equation to the nlp
             self.g.append(Xk_end - Xk)
             self.lbg.append(np.zeros(self.ocp.x_dim))
             self.ubg.append(np.zeros(self.ocp.x_dim))
+        nlp = {'f': self.J, 'x': ca.vertcat(*self.w), 'g': ca.vertcat(*self.g)} # nlp to be solved
+        self.nlp_solver = ca.nlpsol('solver', 'ipopt', nlp, self.ipopt_opts)    # construct nlp solver object using IPOPT as solver
 
-            if u_polynomial and u_continuous:
-                Uk_0 = 0
-                for j in range(self.M):
-                    Uk_0 += bu0[j]*Uc[j]
-
-                if k > 0:
-                    self.g.append(Uk_end - Uk_0)
-                    self.lbg.append(np.zeros(self.ocp.u_dim))
-                    self.ubg.append(np.zeros(self.ocp.u_dim))
-
-                Uk_end = 0
-                for j in range(self.M):
-                    Uk_end += bu[j]*Uc[j]
-
-        self.w = ca.vertcat(*self.w)
-        self.g = ca.vertcat(*self.g)
-
-        # Create an NLP solver
-        prob = {'f': self.J, 'x': self.w, 'g': self.g}
-        self.nlp_solver = ca.nlpsol('solver', 'ipopt', prob, self.ipopt_opts)
-
-        # Solve the NLP
+        # solve the nlp
         sol = self.nlp_solver(x0=np.concatenate(self.w0), lbx=np.concatenate(self.lbw), ubx=np.concatenate(self.ubw),
                               lbg=np.concatenate(self.lbg), ubg=np.concatenate(self.ubg))
+
+        # get input trajectory from the nlp solution
         w_opt = sol['x'].full().flatten()
         self.w_opt = w_opt
+        u_opt_N = np.zeros((self.ocp.u_dim,0))
+        for i in range(self.N):
+            u_opt_N = np.append(u_opt_N, np.reshape(w_opt[(self.M+1)*self.ocp.x_dim*i + self.ocp.u_dim*i:(self.M+1)*self.ocp.x_dim*i + self.ocp.u_dim*(i+1)], (self.ocp.u_dim,1)), axis=1)
+        u_opt_N = np.reshape(u_opt_N, (self.ocp.u_dim,self.N))
+        self.u_opt_N = u_opt_N
+        # adjust input trajectory to simulation time grid
+        self.u_opt = interp1d(self.tgrid_N[0:-1], u_opt_N, bounds_error=False, fill_value=u_opt_N[:,-1], kind='zero')(self.tgrid_sim[0:-1])
 
-        if u_polynomial:
-            u_opt_N = np.zeros((self.ocp.u_dim,0))
-            for i in range(self.N):
-                u_opt_N = np.append(u_opt_N, w_opt[(self.M+1)*self.ocp.x_dim*i + self.M*self.ocp.u_dim*i:(self.M+1)*self.ocp.x_dim*i + self.M*self.ocp.u_dim*(i+1)])
-            u_opt_N = np.reshape(u_opt_N, (self.ocp.u_dim,self.N*self.M))
-
-            t = sp.symbols('t')
-            self.u_opt = np.zeros((self.ocp.u_dim,0))
-            for i in range(self.N):
-                u_t_i = 0
-                for j in range(self.M):
-                    u_t_i += Pu[j]((t - self.tgrid_N[i])/self.h_N)*u_opt_N[:,i*self.M+j]
-                u_t_i_fcn = st.expr_to_func(t, u_t_i)
-                self.u_opt = np.append(self.u_opt, [u_t_i_fcn(element) for element in self.tgrid_sim[int(i*round(self.h_N/self.h_sim)):int((i+1)*round(self.h_N/self.h_sim))]])
-            self.u_opt = np.reshape(self.u_opt, (self.ocp.u_dim,len(self.tgrid_sim)-1))
-
-        else:
-            u_opt_N = np.zeros((self.ocp.u_dim,0))
-            for i in range(self.N):
-                u_opt_N = np.append(u_opt_N, np.reshape(w_opt[(self.M+1)*self.ocp.x_dim*i + self.ocp.u_dim*i:(self.M+1)*self.ocp.x_dim*i + self.ocp.u_dim*(i+1)], (self.ocp.u_dim,1)), axis=1)
-            u_opt_N = np.reshape(u_opt_N, (self.ocp.u_dim,self.N))
-            self.u_opt_N = u_opt_N
-
-            self.u_opt = interp1d(self.tgrid_N[0:-1], u_opt_N, bounds_error=False, fill_value=u_opt_N[:,-1], kind='zero')(self.tgrid_sim[0:-1])
-
+        # get state trajectory and total cost via simulation
         self.get_trajectory()
         if plot: self.plot_trajectory()
 
 
 
-if __name__ is '__main__':
+class ocp_dcm2_solver(ocp_d_solver): # solver class for direct (orthogonal) collocation method with piecewise polynomial input parametrization
+
+
+    def __init__(self, ocp):
+        super(ocp_dcm2_solver, self).__init__(ocp)
+
+        self.u_type = 'default' # continuous input trajectory
+
+
+    def solve(self, h_sim, N, M, u_ig=None, x_ig=None, plot=False):
+        self.initialize(h_sim, N, M, u_ig, x_ig, None)
+        self.initialize_ca()
+        fq_fcn = ca.Function('f', [self.x, self.u], [self.x_dot, self.L], ['x', 'u'], ['xdot', 'L'])    # state space model and cost functional as CasADi function
+
+        # setup collocation method
+        cp = np.array(ca.collocation_points(self.M, 'legendre'))    # M collocation points (roots of the shifted Legendre polynomial of degree M)
+        # one interpolation polynomial (sum of M+1 Lagrange polynomials) on the interval [0,1] for state
+        c = np.array(np.append(0, cp))                              # M+1 interpolation points
+        a = np.zeros((self.M+1,self.M+1))                           # derivatives of the M+1 Lagrange polynomials at each interpolation point (needed for collocation equations)
+        b = np.zeros(self.M+1)                                      # values of the M+1 Lagrange polynomials at the end of the interval (needed for the continuity equation)
+        d = np.zeros(self.M+1)                                      # integrals of M+1 Lagrange polynomials over the interval (needed to calculate the cost)
+        # determine coefficients (a, b, d) by constructing M+1 Lagrange polynomials, i.e. one interpolation polynomial
+        for j in range(self.M+1):
+            # construct the Lagrange polynomial
+            p = np.poly1d([1])
+            for k in range(self.M+1):
+                if k != j:
+                    p *= np.poly1d([1, -c[k]]) / (c[j] - c[k])
+            # evaluate the Lagrange polynomial at the end of the interval
+            b[j] = p(1.0)
+            # evaluate the derivative of the Lagrange polynomial at all collocation points
+            p_dot = np.polyder(p)
+            for r in range(self.M+1):
+                a[j,r] = p_dot(c[r])
+            # evaluate the integral of the polynomial over the interval
+            p_int = np.polyint(p)
+            d[j] = p_int(1.0)
+        # one interpolation polynomial (sum of M Lagrange polynomials) on the interval [0,1] for input
+        bu = np.zeros(self.M)                                       # values of the M Lagrange polynomials at the end of the interval
+        bu0 = np.zeros(self.M)                                      # values of the M Lagrange polynomials at the beginning of the interval
+        # determine coefficients (bu, bu0) by constructing M Lagrange polynomials, i.e. one interpolation polynomial
+        pu_dots = [] # derivatives of the Lagrange polynomials
+        for j in range(self.M):
+            # construct the Lagrange polynomial
+            pu = np.poly1d([1])
+            for k in range(self.M):
+                if k != j:
+                    pu *= np.poly1d([1, -cp[k]]) / (cp[j] - cp[k])
+            # evaluate the Lagrange polynomial at the end and beginning of the interval
+            bu[j] = pu(1.0)
+            bu0[j] = pu(0.0)
+            # determine derivative of the Lagrange polynomial
+            pu_dots.append(np.polyder(pu))
+        # insert piecewise polynomial input parametrization in state space model (needed for accurate simulation results)
+        uc = []                     # symbolic variables for input at collocation points
+        for j in range(M):
+            uc.append(ca.MX.sym('uc_' + str(j+1), self.ocp.u_dim))
+        c_t = ca.MX.sym('c')        # symbolic variable for point within interval [0,1]
+        pc = ca.vertcat(*uc, c_t)   # collect variables (ode parameters)
+        c_t_sp = sp.symbols('c_t')  # SymPy symbolic variable for point within interval [0,1] (in order to insert in numpy polynomials pu_dots)
+        # determine ode for input according to polynomial parametrization
+        u_dot = 0
+        for j in range(self.M):
+            u_dot += eval(str(pu_dots[j](c_t_sp)))*uc[j]/self.h_N
+        # setup new state space model and corresponding CasADi integrator object
+        self.xu = ca.vertcat(self.x, self.u)            # new state consists of system state and input
+        self.xu_dot = ca.vertcat(self.x_dot, u_dot)     # new state space model
+        self.ode2 = {'x': self.xu, 'p': pc, 'ode': self.xu_dot, 'quad': self.L}
+        self.simulator2 = ca.integrator('simulator2', 'cvodes', self.ode2, {'tf': self.h_sim, 'abstol': self.int_tol, 'reltol': self.int_tol})
+
+        # formulate the nlp with the collocation method
+        Xk = ca.MX(self.ocp.x_0)    # initial state
+        Uk_end = None               # input at the end of the last subinterval
+        for k in range(self.N):
+            # input at collocation points
+            Uc = []
+            for j in range(self.M):
+                # add input at the current collocation point to problem variables
+                Ukj = ca.MX.sym('U_' + str(k) + '_' + str(j), self.ocp.u_dim)
+                Uc.append(Ukj)
+                self.w.append(Ukj)
+                # consider input constraints
+                self.lbw.append(self.ocp.u_min)
+                self.ubw.append(self.ocp.u_max)
+                # initialize input at the current collocation point with zeros or consider initial guess
+                if u_ig == None:
+                    self.w0.append(np.zeros(self.ocp.u_dim))
+                else:
+                    self.w0.append(self.u_ig[:,k*self.M+j])
+            # state at collocation points
+            Xc = []
+            for j in range(self.M):
+                # add state at the current collocation point to problem variables
+                Xkj = ca.MX.sym('X_' + str(k) + '_' + str(j), self.ocp.x_dim)
+                Xc.append(Xkj)
+                self.w.append(Xkj)
+                # consider state constraints
+                self.lbw.append(self.ocp.x_min)
+                self.ubw.append(self.ocp.x_max)
+                # initialize state at the current collocation point with zeros or consider initial guess
+                if x_ig == None:
+                    self.w0.append(np.zeros(self.ocp.x_dim))
+                else:
+                    self.w0.append(self.x_ig[:,k*self.M+j+1])
+            # loop over collocation points to setup collocation equations
+            Xk_end = b[0]*Xk
+            for j in range(1,self.M+1):
+               # sum over interpolation points to get the state derivatives at the collocation point
+               xp = a[0,j]*Xk/self.h_N
+               for r in range(self.M):
+                   xp += a[r+1,j]*Xc[r]/self.h_N
+               # add collocation equation to the nlp
+               fj, qj = fq_fcn(Xc[j-1], Uc[j-1])
+               self.g.append(fj - xp)
+               self.lbg.append(np.zeros(self.ocp.x_dim))
+               self.ubg.append(np.zeros(self.ocp.x_dim))
+               # sum over interpolation points to get the states at the end of the subinterval
+               Xk_end += b[j]*Xc[j-1]
+               # contribution to quadrature state (cost)
+               self.J = self.J + d[j]*qj*self.h_N
+            # state at the end of the current subinterval
+            if k == self.N-1:   # consider condition for final state
+                Xk = ca.MX(self.ocp.x_f)
+            else:
+                # add state at the end of the current subinterval to problem variables
+                Xk = ca.MX.sym('X_' + str(k+1), self.ocp.x_dim)
+                self.w.append(Xk)
+                # consider state constraints
+                self.lbw.append(self.ocp.x_min)
+                self.ubw.append(self.ocp.x_max)
+                # initialize state at the end of the current subinterval with zeros or consider initial guess
+                if x_ig == None:
+                    self.w0.append(np.zeros(self.ocp.x_dim))
+                else:
+                    self.w0.append(self.x_ig[:,k*(self.M+1)])
+            # add continuity equation to the nlp
+            self.g.append(Xk_end - Xk)
+            self.lbg.append(np.zeros(self.ocp.x_dim))
+            self.ubg.append(np.zeros(self.ocp.x_dim))
+
+            Uk_0 = 0
+            for j in range(self.M):
+                Uk_0 += bu0[j]*Uc[j]
+            if k > 0:
+                self.g.append(Uk_end - Uk_0)
+                self.lbg.append(np.zeros(self.ocp.u_dim))
+                self.ubg.append(np.zeros(self.ocp.u_dim))
+            Uk_end = 0
+            for j in range(self.M):
+                Uk_end += bu[j]*Uc[j]
+        self.w = ca.vertcat(*self.w)
+        self.g = ca.vertcat(*self.g)
+        nlp = {'f': self.J, 'x': self.w, 'g': self.g}                           # nlp to be solved
+        self.nlp_solver = ca.nlpsol('solver', 'ipopt', nlp, self.ipopt_opts)    # construct nlp solver object using IPOPT as solver
+
+        # solve the nlp
+        sol = self.nlp_solver(x0=np.concatenate(self.w0), lbx=np.concatenate(self.lbw), ubx=np.concatenate(self.ubw),
+                              lbg=np.concatenate(self.lbg), ubg=np.concatenate(self.ubg))
+
+        # get input at collocation points from the nlp solution
+        w_opt = sol['x'].full().flatten()
+        self.w_opt = w_opt
+        u_opt_NM = np.zeros((self.ocp.u_dim,0))
+        for i in range(self.N):
+            u_opt_NM = np.append(u_opt_NM, w_opt[(self.M+1)*self.ocp.x_dim*i + self.M*self.ocp.u_dim*i:(self.M+1)*self.ocp.x_dim*i + self.M*self.ocp.u_dim*(i+1)])
+        u_opt_NM = np.reshape(u_opt_NM, (self.ocp.u_dim,self.N*self.M))
+
+        # collect ode parameters (input at collocation points)
+        self.p_opt = []
+        for i in range(self.N):
+            p_opt_i = np.zeros((self.ocp.u_dim*M,0))
+            for j in range(self.M):
+                p_opt_i = np.append(p_opt_i, u_opt_NM[:,i*self.M+j])
+            self.p_opt.append(p_opt_i)
+
+        # get state and input trajectory and total cost via simulation
+        u_opt_0 = 0
+        for j in range(self.M):
+            u_opt_0 += bu0[j]*u_opt_NM[:,j]
+        self.xu_opt = np.reshape(np.append(self.ocp.x_0, u_opt_0), (self.ocp.x_dim+self.ocp.u_dim,1))
+        J = 0
+        for i in range(len(self.tgrid_sim)-1):
+            pc_opt_i = np.append(self.p_opt[int(i*self.h_sim/self.h_N)], (self.tgrid_sim[i] - self.tgrid_N[int(i*self.h_sim/self.h_N)])/self.h_N)
+            if self.tgrid_sim[i] in self.tgrid_N:
+                u_opt_0 = 0
+                for j in range(self.M):
+                    u_opt_0 += bu0[j]*u_opt_NM[:,np.where(self.tgrid_N==self.tgrid_sim[i])[0][0]*self.M+j]
+                xu_opt_N = np.append(self.xu_opt[0:self.ocp.x_dim,-1], u_opt_0)
+                sim_i = self.simulator2(x0=xu_opt_N, p=pc_opt_i)
+            else:
+                sim_i = self.simulator2(x0=self.xu_opt[:,-1], p=pc_opt_i)
+            self.xu_opt = np.append(self.xu_opt, np.reshape(np.array(sim_i['xf'].full()), (self.ocp.x_dim+self.ocp.u_dim,1)), axis=1)
+            J += sim_i['qf'].full()[0][0]
+        self.x_opt = self.xu_opt[0:self.ocp.x_dim,:]
+        self.u_opt = self.xu_opt[self.ocp.x_dim:self.ocp.x_dim+self.ocp.u_dim,0:-1]
+
+        # collect solution statistics
+        self.stats['J'] = J                                                         # total cost
+        stats = self.nlp_solver.stats()                                             # get IPOPT stats
+        self.stats['success'] = stats['success']                                    # IPOPT: local optimum found
+        self.stats['time'] = stats['t_wall_solver']                                 # IPOPT: elapsed real time (wall time)
+        self.stats['iters'] = stats['iter_count']                                   # IPOPT: number of iterations
+        self.stats['time_per_iter'] = self.stats['time']/self.stats['iters']        # IPOPT: elapsed real time per iteration (mean)
+        self.stats['x_f_dev'] = np.linalg.norm(self.x_opt[:,-1] - self.ocp.x_f)     # deviation of final state (Euclidean norm)
+
+        if plot: self.plot_trajectory()
+
+
+
+if __name__ == '__main__':
 
 
     problem_names = {'1': 'double_int', '2': 'pend', '3': 'pend_cart_pl', '4': 'pend_cart',
@@ -812,9 +926,10 @@ if __name__ is '__main__':
 #    dmsm_solver.solve(h_sim, N, None, None, True)
 
     dcm_solver = ocp_dcm_solver(ocp1)
-    dcm_solver.solve(h_sim, N, M, False, False, None, None, True)
-#    dcm_solver.solve(h_sim, N, M, True, True, None, None, True)
+    dcm_solver.solve(h_sim, N, M, None, None, True)
 
+#    dcm2_solver = ocp_dcm2_solver(ocp1)
+#    dcm2_solver.solve(h_sim, N, M, None, None, True)
 
 #    x_opt = dcm_solver.x_opt
 #    x_ig = interp1d(tgrid_sim, x_opt, kind='zero')(tgrid_NM)

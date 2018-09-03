@@ -4,6 +4,12 @@ Created on Thu May 31 16:09:40 2018
 
 @author: Patrick Rüdiger
 
+Student project/thesis: Verfahrensvergleich zur Trajektorienplanung für dynamische Systeme (comparison of trajectory planning methods for dynamical systems)
+
+The ocp class implements a general representation of an optimal control problem (ocp) and further includes example problems
+
+The method indirect_method() determines ode and input parametrization for indirect methods based on necessary optimality conditions
+
 """
 
 # Some examples taken from https://pytrajectory.readthedocs.io/en/master/guide/examples/index.html
@@ -39,37 +45,35 @@ class ocp(object):
 
 
     def __init__(self, name, has_objective=True, c=None):
-        self.x_dim = None
-        self.u_dim = None
-        self.x = None
-        self.u = None
-        self.x_dot = None
-        self.x_0 = None
-        self.x_f = None
-        self.u_0 = None
-        self.u_f = None
-        self.t_0 = None
-        self.t_f = None
-        self.x_min = None
-        self.x_max = None
-        self.u_min = None
-        self.u_max = None
-        self.L = None
-        self.E = None
-        self.Q = None
-        self.R = None
-        self.S = None
-        self.x_dict = None
-        self.u_dict = None
-        self.H = None
-        self.y_dot = None
-        self.Hu = None
-        self.u_noc = None
-        self.z_dot = None
+        self.x_dim = None   # state dimension
+        self.u_dim = None   # input dimension
+        self.x = None       # symbolic variable for state
+        self.u = None       # symbolic variable for input
+        self.x_dot = None   # symbolic expression of state space model
+        self.x_0 = None     # initial state
+        self.x_f = None     # final state
+        self.u_0 = None     # initial input
+        self.u_f = None     # final input
+        self.t_0 = None     # initial time
+        self.t_f = None     # final time
+        self.x_min = None   # lower bound of state (state constraint)
+        self.x_max = None   # upper bound of state (state constraint)
+        self.u_min = None   # lower bound of input (input constraint)
+        self.u_max = None   # upper bound of input (input constraint)
+        self.L = None       # integral cost
+        self.Q = None       # weight matrix for state in integral cost
+        self.R = None       # weight matrix for input in integral cost
+        self.x_dict = None  # describes state components
+        self.u_dict = None  # describes input components
+        self.H = None       # Hamiltonian (needed for necessary optimality conditions)
+        self.y_dot = None   # ode for co-state based on necessary optimality conditions
+        self.Hu = None      # Jacobian of Hamiltonian w.r.t. u
+        self.u_noc = None   # input parametrization based on necessary optimality conditions
+        self.z_dot = None   # ode based on necessary optimality conditions
 
-        self.has_objective = has_objective
-        self.c = c
-        self.name = name
+        self.has_objective = has_objective  # specifies whether ocp has a nonzero cost functional
+        self.c = c                          # optional constant to modify problem parameters
+        self.name = name                    # ocp name
         if self.name not in [*dim21_problems, *dim41_problems, *dim61_problems, *dim62_problems, *dim81_problems]: print('Error: Not Implemented')
         assert self.name in [*dim21_problems, *dim41_problems, *dim61_problems, *dim62_problems, *dim81_problems]
         self.x_dim, self.u_dim = dimensions[self.name]
@@ -97,8 +101,8 @@ class ocp(object):
             x1, x2, x3, x4, x5, x6, x7, x8 = self.x
             u1 = self.u[0]
 
-
-        if self.name is 'double_int':
+        # example problems
+        if self.name == 'double_int':
             # double integrator
             self.x_dict = {'1': 's', '2': 'v'}
             self.u_dict = {'1': 'a'}
@@ -120,7 +124,7 @@ class ocp(object):
             self.R = sp.diag(*np.ones(self.u_dim))
 
 
-        elif self.name is 'pend':
+        elif self.name == 'pend':
             # simple pendulum
             l = 0.5     # length of the pendulum
             g = 9.81    # gravitational acceleration
@@ -162,22 +166,22 @@ class ocp(object):
 #            self.x_0 = np.array([0, 0, 45/180*np.pi, 0])
             self.x_f = np.array([0, 0, 0, 0])
             self.t_0 = 0
-#            self.t_f = 1
-            self.t_f = self.c
+            self.t_f = 1
+#            self.t_f = self.c
 
             self.x_min = -np.inf*np.ones(self.x_dim)
             self.x_max = np.inf*np.ones(self.x_dim)
             self.u_min = -np.inf*np.ones(self.u_dim)
             self.u_max = np.inf*np.ones(self.u_dim)
-            self.u_min = -100*np.ones(self.u_dim)
-            self.u_max = 100*np.ones(self.u_dim)
+#            self.u_min = -100*np.ones(self.u_dim)
+#            self.u_max = 100*np.ones(self.u_dim)
 
             self.Q = sp.diag(*np.ones(self.x_dim))
             self.R = sp.diag(*np.ones(self.u_dim))
 
 
         elif self.name in ['dual_pend_cart_pl', 'dual_pend_cart']:
-            # ((partially linearized) dual pendulum on cart
+            # (partially linearized) dual pendulum on cart
             # center of mass, and mass of the pendulums
 #            s1 = 0.7
             s1 = self.c
@@ -211,7 +215,7 @@ class ocp(object):
             self.R = sp.diag(*np.ones(self.u_dim))
 
 
-        elif self.name is 'vtol':
+        elif self.name == 'vtol':
             # PyTrajectory: ex3 (vertical take-off and landing aircraft)
             # coordinates for the points in which the engines engage [m]
             l = 1.0
@@ -255,7 +259,7 @@ class ocp(object):
             self.R = sp.diag(*np.ones(self.u_dim))
 
 
-        elif self.name is 'ua_manipulator_pl':
+        elif self.name == 'ua_manipulator_pl':
             # PyTrajectory: ex4 (underactuated manipulator, partially linearized)
             e = 0.9     # inertia coupling
             s = sp.sin(x3)
@@ -283,7 +287,7 @@ class ocp(object):
             self.R = sp.diag(*np.ones(self.u_dim))
 
 
-        elif self.name is 'acrobot_pl':
+        elif self.name == 'acrobot_pl':
             # PyTrajectory: ex5 (Acrobot, partially linearized)
             m = 1.0             # masses of the rods [m1 = m2 = m]
             l = 0.5             # lengths of the rods [l1 = l2 = l]
@@ -320,7 +324,7 @@ class ocp(object):
             self.R = sp.diag(*np.ones(self.u_dim))
 
 
-        elif self.name is 'double_pend_cart_pl':
+        elif self.name == 'double_pend_cart_pl':
             # partially linearized double pendulum on cart
             # length, center of mass, mass, and moment of inertia of the pendulums
             l1 = 0.5
@@ -354,7 +358,7 @@ class ocp(object):
             self.R = sp.diag(*np.ones(self.u_dim))
 
 
-        elif self.name is 'triple_pend_cart_pl':
+        elif self.name == 'triple_pend_cart_pl':
             # partially linearized triple pendulum on cart
             # length, center of mass, mass, and moment of inertia of the pendulums
             l1 = 0.5
@@ -385,8 +389,8 @@ class ocp(object):
 
 #            self.x_min = -np.inf*np.ones(self.x_dim)
 #            self.x_max = np.inf*np.ones(self.x_dim)
-            self.x_min = -np.array([np.inf, np.inf, 2*np.pi, np.inf, 2*np.pi, np.inf, 2*np.pi, np.inf])
-            self.x_max = np.array([np.inf, np.inf, 2*np.pi, np.inf, 2*np.pi, np.inf, 2*np.pi, np.inf])
+            self.x_min = -np.array([np.inf, np.inf, 2*np.pi, np.inf, np.pi, np.inf, 2*np.pi, np.inf])
+            self.x_max = np.array([np.inf, np.inf, 2*np.pi, np.inf, np.pi, np.inf, 2*np.pi, np.inf])
             self.u_min = -np.inf*np.ones(self.u_dim)
             self.u_max = np.inf*np.ones(self.u_dim)
 #            self.u_min = -100*np.ones(self.u_dim)
@@ -396,6 +400,7 @@ class ocp(object):
             self.R = sp.diag(*np.ones(self.u_dim))
 
 
+        # setup objective (cost functional)
         if self.has_objective:
             self.L = ((self.x.T - np.reshape(self.x_f, (1,self.x_dim)))*self.Q*(self.x - np.reshape(self.x_f, (self.x_dim,1)))
                     + self.u.T*self.R*self.u)
@@ -405,7 +410,7 @@ class ocp(object):
             self.L = [0]
 
 
-    def setup_optbvp(self):
+    def indirect_method(self): # determines ode and input parametrization for indirect methods based on necessary optimality conditions
         self.H = self.L + self.y.T*self.x_dot
         self.y_dot = sp.simplify(-self.H.jacobian(self.x))
         self.Hu = sp.simplify(self.H.jacobian(self.u))
