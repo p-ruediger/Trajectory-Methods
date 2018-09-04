@@ -85,11 +85,11 @@ class ocp_solver(object): # general optimal control problem (ocp) solver class
     def initialize(self, h_sim, N, M, u_ig, x_ig, y_ig):    # initialize method parameters
         self.int_tol = 1e-12                # simulation: tolerance of relative and absolute local discretization error of ode solver
         self.h_sim = h_sim                  # simulation: step size
-        if u_ig != None: self.u_ig = u_ig   # initial guess for optimal input trajectory
-        if x_ig != None: self.x_ig = x_ig   # initial guess for optimal state trajectory
-        if y_ig != None: self.y_ig = y_ig   # initial guess for optimal co-state trajectory (indirect methods)
-        if N != None: self.N = N            # number of (time) subintervals
-        if M != None: self.M = M            # order of collocation method
+        if u_ig is not None: self.u_ig = u_ig   # initial guess for optimal input trajectory
+        if x_ig is not None: self.x_ig = x_ig   # initial guess for optimal state trajectory
+        if y_ig is not None: self.y_ig = y_ig   # initial guess for optimal co-state trajectory (indirect methods)
+        if N is not None: self.N = N            # number of (time) subintervals
+        if M is not None: self.M = M            # order of collocation method
 
 
     def plot_trajectory(self): # plots trajectory and shows performance statistics for testing purposes
@@ -238,7 +238,7 @@ class ocp_issm_solver(ocp_i_solver): # solver class for indirect single shooting
 
         # solve the root-finding problem
         self.nlp_solver = ca.rootfinder('solver', 'nlpsol', rfp, self.nlpsol_opts)  # construct rootfinder object using IPOPT as solver
-        if y_ig == None:                                                            # initialize problem variables with zeros or consider initial guess
+        if y_ig is None:                                                            # initialize problem variables with zeros or consider initial guess
             y_0_opt = np.array(self.nlp_solver(0).nonzeros())
         else:
             y_0_opt = np.array(self.nlp_solver(y_ig).nonzeros())
@@ -279,7 +279,7 @@ class ocp_imsm_solver(ocp_i_solver): # solver class for indirect multiple shooti
 
         # solve the root-finding problem
         self.nlp_solver = ca.rootfinder('solver', 'nlpsol', rfp, self.nlpsol_opts)  # construct rootfinder object using IPOPT as solver
-        if np.any(x_ig == None) or np.any(y_ig == None):                            # initialize problem variables with zeros or consider initial guess
+        if np.any(x_ig is None) or np.any(y_ig is None):                            # initialize problem variables with zeros or consider initial guess
             z_opt = self.nlp_solver(0)
         else:
             z_opt = self.nlp_solver(np.ravel(np.concatenate([x_ig, y_ig]), 'F'))
@@ -463,7 +463,7 @@ class ocp_dssm_solver(ocp_d_solver): # solver class for direct single shooting m
             self.lbw.append(self.ocp.u_min)
             self.ubw.append(self.ocp.u_max)
             # initialize input with zeros or consider initial guess
-            if u_ig == None:
+            if u_ig is None:
                 self.w0.append(np.zeros(self.ocp.u_dim))
             else:
                 self.w0.append(self.u_ig[:,k])
@@ -517,7 +517,7 @@ class ocp_dmsm_solver(ocp_d_solver): # solver class for direct multiple shooting
             self.lbw.append(self.ocp.u_min)
             self.ubw.append(self.ocp.u_max)
             # initialize current input with zeros or consider initial guess
-            if u_ig == None:
+            if u_ig is None:
                 self.w0.append(np.zeros(self.ocp.u_dim))
             else:
                 self.w0.append(self.u_ig[:,k])
@@ -536,7 +536,7 @@ class ocp_dmsm_solver(ocp_d_solver): # solver class for direct multiple shooting
                 self.lbw.append(self.ocp.x_min)
                 self.ubw.append(self.ocp.x_max)
                 # initialize state at the end of the current subinterval with zeros or consider initial guess
-                if x_ig == None:
+                if x_ig is None:
                     self.w0.append(np.zeros(self.ocp.x_dim))
                 else:
                     self.w0.append(self.x_ig[:,k])
@@ -611,7 +611,7 @@ class ocp_dcm_solver(ocp_d_solver): # solver class for direct (orthogonal) collo
             self.lbw.append(self.ocp.u_min)
             self.ubw.append(self.ocp.u_max)
             # initialize current input with zeros or consider initial guess
-            if u_ig == None:
+            if u_ig is None:
                 self.w0.append(np.zeros(self.ocp.u_dim))
             else:
                 self.w0.append(self.u_ig[:,k])
@@ -626,7 +626,7 @@ class ocp_dcm_solver(ocp_d_solver): # solver class for direct (orthogonal) collo
                 self.lbw.append(self.ocp.x_min)
                 self.ubw.append(self.ocp.x_max)
                 # initialize state at the current collocation point with zeros or consider initial guess
-                if x_ig == None:
+                if x_ig is None:
                     self.w0.append(np.zeros(self.ocp.x_dim))
                 else:
                     self.w0.append(self.x_ig[:,k*self.M+j+1])
@@ -657,7 +657,7 @@ class ocp_dcm_solver(ocp_d_solver): # solver class for direct (orthogonal) collo
                 self.lbw.append(self.ocp.x_min)
                 self.ubw.append(self.ocp.x_max)
                 # initialize state at the end of the current subinterval with zeros or consider initial guess
-                if x_ig == None:
+                if x_ig is None:
                     self.w0.append(np.zeros(self.ocp.x_dim))
                 else:
                     self.w0.append(self.x_ig[:,k*(self.M+1)])
@@ -774,7 +774,7 @@ class ocp_dcm2_solver(ocp_d_solver): # solver class for direct (orthogonal) coll
                 self.lbw.append(self.ocp.u_min)
                 self.ubw.append(self.ocp.u_max)
                 # initialize input at the current collocation point with zeros or consider initial guess
-                if u_ig == None:
+                if u_ig is None:
                     self.w0.append(np.zeros(self.ocp.u_dim))
                 else:
                     self.w0.append(self.u_ig[:,k*self.M+j])
@@ -789,7 +789,7 @@ class ocp_dcm2_solver(ocp_d_solver): # solver class for direct (orthogonal) coll
                 self.lbw.append(self.ocp.x_min)
                 self.ubw.append(self.ocp.x_max)
                 # initialize state at the current collocation point with zeros or consider initial guess
-                if x_ig == None:
+                if x_ig is None:
                     self.w0.append(np.zeros(self.ocp.x_dim))
                 else:
                     self.w0.append(self.x_ig[:,k*self.M+j+1])
@@ -820,7 +820,7 @@ class ocp_dcm2_solver(ocp_d_solver): # solver class for direct (orthogonal) coll
                 self.lbw.append(self.ocp.x_min)
                 self.ubw.append(self.ocp.x_max)
                 # initialize state at the end of the current subinterval with zeros or consider initial guess
-                if x_ig == None:
+                if x_ig is None:
                     self.w0.append(np.zeros(self.ocp.x_dim))
                 else:
                     self.w0.append(self.x_ig[:,k*(self.M+1)])
@@ -912,7 +912,7 @@ if __name__ == '__main__':
 #    ocp1 = ocp(problem_names['5'], False, 1.5)
 
     h_sim = 0.001
-    N = 400
+    N = 100
     M = 4
 
     tgrid_sim = np.linspace(ocp1.t_0, ocp1.t_f, round((ocp1.t_f - ocp1.t_0)/h_sim)+1)
@@ -939,7 +939,7 @@ if __name__ == '__main__':
 #    u_ig = interp1d(tgrid_sim[0:-1], u_opt, kind='zero')(tgrid_N[0:-1])
 
 #    dcm_solver = ocp_dcm_solver(ocp1)
-#    dcm_solver.solve(h_sim, N, M, False, False, u_ig, x_ig, True)
+#    dcm_solver.solve(h_sim, N, M, u_ig, x_ig, True)
 
 
 #    issm_solver = ocp_issm_solver(ocp1)

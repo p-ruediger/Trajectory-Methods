@@ -2,7 +2,7 @@
 """
 Created on Tue Jul 24 14:33:11 2018
 
-@author: Patrick
+@author: Patrick Rüdiger
 
 Student project/thesis: Verfahrensvergleich zur Trajektorienplanung für dynamische Systeme (comparison of trajectory planning methods for dynamical systems)
 
@@ -11,6 +11,7 @@ Comparison of trajectory planning methods on the basis of different example prob
 """
 
 import numpy as np
+from scipy.interpolate import interp1d
 from ocp import ocp
 from ocp_solver import ocp_dssm_solver, ocp_dmsm_solver, ocp_dcm_solver, ocp_dcm2_solver, ocp_issm_solver, ocp_imsm_solver, ocp_icm_solver
 from plotter import plot as plt
@@ -354,23 +355,23 @@ def run_exp(exp):
         solve_problems(exp, problems, ['dmsm', 'dcm'], mparams)
 
     if exp == 'exp7': # swing-up of triple pendulum on cart (with cost functional)
-        mparams.update({'dcm': {'N': 400, 'M': 4}})
+        mparams.update({'dcm': {'N': 100, 'M': 4}})
         problems = [ocp(problem_names['11'], True, None)]
         sol = solve_problems(exp, problems, ['dcm'], mparams)
 
-#        mparams.update({'dcm': {'N': 200, 'M': 4}})
-#        tgrid_NM = np.linspace(problems[0].t_0, problems[0].t_f, mparams['dcm']['N']*(mparams['dcm']['M']+1))
-#        x_ig = interp1d(sol['tgrid_sim'], sol['x_opt'], kind='zero')(tgrid_NM)
-#        tgrid_N = np.linspace(problems[0].t_0, problems[0].t_f, mparams['dcm']['N']+1)
-#        u_ig = interp1d(sol['tgrid_sim'][0:-1], sol['u_opt'], kind='zero')(tgrid_N[0:-1])
-#        solve_problems(exp, problems, ['dcm'], mparams, u_ig, x_ig)
-#
-#        mparams.update({'dcm': {'N': 400, 'M': 4}})
-#        tgrid_NM = np.linspace(problems[0].t_0, problems[0].t_f, mparams['dcm']['N']*(mparams['dcm']['M']+1))
-#        x_ig = interp1d(sol['tgrid_sim'], sol['x_opt'], kind='zero')(tgrid_NM)
-#        tgrid_N = np.linspace(problems[0].t_0, problems[0].t_f, mparams['dcm']['N']+1)
-#        u_ig = interp1d(sol['tgrid_sim'][0:-1], sol['u_opt'], kind='zero')(tgrid_N[0:-1])
-#        solve_problems(exp, problems, ['dcm'], mparams, u_ig, x_ig)
+        mparams.update({'dcm': {'N': 200, 'M': 4}})
+        tgrid_NM = np.linspace(problems[0].t_0, problems[0].t_f, mparams['dcm']['N']*(mparams['dcm']['M']+1))
+        x_ig = interp1d(sol['tgrid_sim'], sol['x_opt'], kind='zero')(tgrid_NM)
+        tgrid_N = np.linspace(problems[0].t_0, problems[0].t_f, mparams['dcm']['N']+1)
+        u_ig = interp1d(sol['tgrid_sim'][0:-1], sol['u_opt'], kind='zero')(tgrid_N[0:-1])
+        solve_problems(exp, problems, ['dcm'], mparams, u_ig, x_ig)
+
+        mparams.update({'dcm': {'N': 400, 'M': 4}})
+        tgrid_NM = np.linspace(problems[0].t_0, problems[0].t_f, mparams['dcm']['N']*(mparams['dcm']['M']+1))
+        x_ig = interp1d(sol['tgrid_sim'], sol['x_opt'], kind='zero')(tgrid_NM)
+        tgrid_N = np.linspace(problems[0].t_0, problems[0].t_f, mparams['dcm']['N']+1)
+        u_ig = interp1d(sol['tgrid_sim'][0:-1], sol['u_opt'], kind='zero')(tgrid_N[0:-1])
+        solve_problems(exp, problems, ['dcm'], mparams, u_ig, x_ig)
 
 
 def create_animation(exp, file_name, sol, save=False):
@@ -444,7 +445,7 @@ def create_animation(exp, file_name, sol, save=False):
 
     fig, ax = mplt.subplots()
     ax.set_aspect('equal')
-    ax.set(xlabel=r'$s$ in m', ylabel=r'$y$ in m')
+    ax.set(xlabel=r'$s$ in m', ylabel=r'$h$ in m')
     if sol['prob'].name in ['pend_cart_pl', 'pend_cart']:
         mplt.ylim((-0.3, 0.3))
     elif sol['prob'].name in ['dual_pend_cart_pl', 'dual_pend_cart']:
@@ -461,7 +462,7 @@ def create_animation(exp, file_name, sol, save=False):
     elif sol['prob'].name == 'triple_pend_cart_pl':
         rail, = ax.plot([min(min(x_cart)-0.2, min(x1), min(x2), min(x3)), max(max(x_cart)+0.2, max(x1), max(x2), max(x3))], [0,0], 'ks-', zorder=0)
     cart = patches.Rectangle((-0.1, -0.05), 0.2, 0.1, fc='k', zorder=1)
-    pole, = ax.plot([], [], 'b-', lw=3, zorder=2)
+    pole, = ax.plot([], [], 'b.-', lw=2, zorder=2)
     ax.add_artist(cart)
     if sol['tgrid_sim'][-1] - sol['tgrid_sim'][0] < 2:
         ani = animation.FuncAnimation(fig, animate, np.arange(0, int(len(sol['tgrid_sim'])/d)), interval=0.2/h_ani, blit=True)
@@ -498,7 +499,7 @@ if __name__ == '__main__':
 
     elif mode == '3': # create animation
 
-        file_name = 'triple_pend_cart_pl_True_None_dcm_400_4_12498030fac1c6b6e60b959e43b2acc2df19c79f'
+        file_name = 'triple_pend_cart_pl_True_None_dcm_400_4_97eb7ab5bc5dc481f887b042857cf92a43b3001d'
 
         sol = load('exps/' + exp + '/' + file_name + '.dat')
 
